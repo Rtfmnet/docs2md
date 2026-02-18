@@ -1,0 +1,5 @@
+root_folder: 'manual_tests'
+# or
+# root_folder: '\folder\subfolder'
+pause_before_exit: false
+force_md_generation: false
