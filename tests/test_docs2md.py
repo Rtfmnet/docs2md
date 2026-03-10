@@ -57,7 +57,10 @@ class TestVerifyPandoc(unittest.TestCase):
     @patch('subprocess.run')
     def test_verify_pandoc_positive(self, mock_run):
         """Test successful pandoc verification"""
-        mock_run.return_value = Mock(returncode=0)
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Pandoc 2.7.3"
+        mock_run.return_value = mock_result
         result = docs2md.verify_pandoc()
         self.assertTrue(result)
     
@@ -212,14 +215,16 @@ class TestFilterFilesByReadme(unittest.TestCase):
         """Test successful file filtering"""
         files = ['test.docx', 'report.docx']
         content = 'Process test.docx'
-        result = docs2md.filter_files_by_readme(files, content, True)
+        logger = Mock()
+        result = docs2md.filter_files_by_readme(files, content, True, logger)
         self.assertIn('test.docx', result)
     
     def test_filter_files_with_skipfile(self):
         """Test filtering with skipfile tag"""
         files = ['test.docx']
         content = 'test.docx doc2md#skipfile'
-        result = docs2md.filter_files_by_readme(files, content, True)
+        logger = Mock()
+        result = docs2md.filter_files_by_readme(files, content, True, logger)
         self.assertEqual(len(result), 0)
 
 
@@ -272,7 +277,9 @@ class TestConvertToMarkdown(unittest.TestCase):
     @patch('os.makedirs')
     def test_convert_to_markdown_positive(self, mock_makedirs, mock_run):
         """Test successful conversion"""
-        mock_run.return_value = Mock(returncode=0)
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_run.return_value = mock_result
         logger = Mock()
         success, message = docs2md.convert_to_markdown('/src.docx', '/dst.md', logger)
         self.assertTrue(success)
@@ -282,7 +289,10 @@ class TestConvertToMarkdown(unittest.TestCase):
     @patch('os.makedirs')
     def test_convert_to_markdown_failure(self, mock_makedirs, mock_run):
         """Test conversion failure"""
-        mock_run.return_value = Mock(returncode=1, stderr='Error occurred')
+        mock_result = Mock()
+        mock_result.returncode = 1
+        mock_result.stderr = 'Error occurred'
+        mock_run.return_value = mock_result
         logger = Mock()
         success, message = docs2md.convert_to_markdown('/src.docx', '/dst.md', logger)
         self.assertFalse(success)
@@ -301,7 +311,8 @@ class TestProcessFile(unittest.TestCase):
         mock_get_path.return_value = '/dir/test.md'
         mock_convert.return_value = (True, 'MD generated')
         logger = Mock()
-        success, message = docs2md.process_file('test.docx', '/dir', False, logger)
+        config = {'git_commit': False}
+        success, message = docs2md.process_file('test.docx', '/dir', False, logger, config)
         self.assertTrue(success)
     
     @patch('docs2md.is_source_newer')
@@ -313,7 +324,8 @@ class TestProcessFile(unittest.TestCase):
         mock_get_path.return_value = '/dir/test.md'
         mock_newer.return_value = False
         logger = Mock()
-        success, message = docs2md.process_file('test.docx', '/dir', False, logger)
+        config = {'git_commit': False}
+        success, message = docs2md.process_file('test.docx', '/dir', False, logger, config)
         self.assertIsNone(success)
         self.assertIn('Skipped', message)
 

@@ -1,5 +1,34 @@
-root_folder: 'manual_tests'
-# or
-# root_folder: '\folder\subfolder'
+#root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\manual_tests\bugs'
+#pause_before_exit: false
+#force_md_generation: false
+#log_level: INFO # INFO DEBUG ERROR
+#git_commit: false
+#force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai/-/tree/main/sandbox/doc2md-tests'
+
+# FA
+root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\FA'
 pause_before_exit: false
 force_md_generation: false
+log_level: INFO # INFO DEBUG ERROR
+git_commit: true
+force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-fa/-/tree/main/FA'
+
+# OptiFlow
+#root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\OptiFlow'
+#pause_before_exit: false
+#force_md_generation: false
+#log_level: INFO # INFO DEBUG ERROR
+#git_commit: true
+#force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-of/-/tree/main/OptiFlow'
+
+# Private SaaS
+#root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\PrivateSaaS'
+#pause_before_exit: false
+#force_md_generation: true
+#log_level: INFO # INFO DEBUG ERROR
+#git_commit: true
+#force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-psaas/-/tree/main/PrivateSaaS'
