@@ -1,4 +1,4 @@
 /.env
-/manual_tests/
+/tests/manual_tests/
 /logs/
 /.codemie/

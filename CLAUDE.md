@@ -17,9 +17,9 @@ python -m pytest tests/
 
 # Run a single test file
 python -m pytest tests/test_docs2md.py
-python -m pytest tests/test_integration_docs2md.py
-python -m pytest tests/test_git_manager.py
-python -m pytest tests/test_tool.py
+python -m pytest tests/e2e_docs2md.py
+python -m pytest tests/test_git_sync.py
+python -m pytest tests/test_merge_md.py
 
 # Run a single test class or method
 python -m pytest tests/test_docs2md.py::TestConvertToMarkdown
@@ -33,9 +33,9 @@ python -m pytest tests/test_docs2md.py::TestConvertToMarkdown::test_convert_succ
 All core logic lives in two files:
 
 - **`docs2md.py`** — the entire application: config loading, logging setup, pandoc verification, recursive directory processing, and the main processing pipeline.
-- **`git_manager.py`** — `GitManager` class: validates GitLab URLs and pushes files via the GitLab Repository Files API (HEAD to check existence, then POST or PUT).
+- **`git_sync.py`** — `GitManager` class: validates GitLab URLs and pushes files via the GitLab Repository Files API (HEAD to check existence, then POST or PUT).
 
-The `tools/` directory contains standalone utility scripts (bulk converter, md merger, docx converter, transcript sanitizer) that are **not integrated** into the main pipeline.
+The `samples/` directory contains standalone utility scripts (bulk converter, md merger, docx converter, transcript sanitizer) that are **not integrated** into the main pipeline.
 
 ## Processing Algorithm
 
@@ -71,5 +71,5 @@ Key fields:
 
 - Tests use `unittest` (compatible with pytest). No `pytest.ini` or `pyproject.toml` exists.
 - Unit tests mock all external calls (filesystem, subprocess, requests).
-- Integration tests (`test_integration_docs2md.py`) create real temp directories under `tests/test_data/` and require pandoc installed; they clean up in `tearDown()`.
+- Integration tests (`e2e_docs2md.py`) create real temp directories under `tests/test_data/` and require pandoc installed; they clean up in `tearDown()`.
 - `active-prompt.md` describes the change workflow: plan → temp test → unit tests pass → add new unit test → unit tests pass again.

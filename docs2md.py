@@ -15,7 +15,7 @@ from datetime import datetime
 import yaml
 
 # Import GitManager
-from git_manager import GitManager
+from git_sync import GitManager
 
 
 # Class variable to track GitManager initialization status
