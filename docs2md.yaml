@@ -1,9 +1,10 @@
 # tests
 root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\manual_tests'
 force_md_generation: true
-git_commit: ture
-force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
-git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
+git_commit: false
+force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
+git_url: 'https://github.com/Rtfmnet/test-data/tree/main/doc2md'
 
 # FA
 #root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\FA'
@@ -77,6 +78,7 @@ common:
     - .textile
     - .tikiwiki
     - .tsv
+    - .tst
     - .twiki
     - .typst
     - .vimwiki

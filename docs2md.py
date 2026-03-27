@@ -513,6 +513,10 @@ def sync_to_git(file_path, config, logger):
             # Calculate child path
             child_path = os.path.relpath(os.path.dirname(norm_file), norm_root)
 
+            # Normalize '.' (file is directly in root_folder) to empty string
+            if child_path == ".":
+                child_path = ""
+
             # Remove 'md' dir if it's the last dir
             if (
                 child_path.endswith(os.path.sep + MD_DIR_NAME)
@@ -709,6 +713,22 @@ def process_directories_recursively(
 ):
     """Process all directories recursively starting from root"""
     for dirpath, dirnames, filenames in os.walk(root_folder):
+        readme_path = os.path.join(dirpath, README_FILENAME)
+        if not os.path.exists(readme_path):
+            logger.info(
+                f"Skipped (no {README_FILENAME}): {dirpath} — subdirectories will not be traversed"
+            )
+            stats["dirs_skipped"] += 1
+            dirnames[:] = []
+            continue
+        readme_content = read_readme(readme_path)
+        if not check_aikb_tag(readme_content):
+            logger.info(
+                f"Skipped (no {TAG_AIKB} tag): {dirpath} — subdirectories will not be traversed"
+            )
+            stats["dirs_skipped"] += 1
+            dirnames[:] = []
+            continue
         process_directory(dirpath, config, logger, stats, important_logs)
 
 

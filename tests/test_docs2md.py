@@ -573,5 +573,121 @@ class TestLoadConfigCommonSection(unittest.TestCase):
         self.assertEqual(exts, {".docx", ".pdf"})
 
 
+class TestProcessDirectoriesRecursively(unittest.TestCase):
+    """Test subdirectory pruning in process_directories_recursively"""
+
+    def _make_walk_result(self, entries):
+        """Helper: build os.walk-style list of (dirpath, dirnames, filenames)"""
+        return iter(entries)
+
+    def _run(self, walk_entries, readme_exists_map, readme_content_map):
+        """
+        Run process_directories_recursively with controlled os.walk and filesystem mocks.
+
+        walk_entries: list of (dirpath, dirnames_list, filenames_list)
+                      dirnames_list must be a plain list so in-place mutation works.
+        readme_exists_map: dict {path: bool} for os.path.exists
+        readme_content_map: dict {path: str} for read_readme
+        """
+        visited = []
+
+        def mock_process_directory(directory, *args, **kwargs):
+            visited.append(directory)
+
+        logger = Mock()
+        config = {}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+
+        with (
+            patch("docs2md.os.walk", return_value=iter(walk_entries)),
+            patch(
+                "docs2md.os.path.exists",
+                side_effect=lambda p: readme_exists_map.get(p, False),
+            ),
+            patch(
+                "docs2md.read_readme",
+                side_effect=lambda p: readme_content_map.get(p, ""),
+            ),
+            patch("docs2md.process_directory", side_effect=mock_process_directory),
+        ):
+            docs2md.process_directories_recursively("/root", config, logger, stats)
+
+        return visited, stats
+
+    def test_subdir_skipped_when_parent_has_no_readme(self):
+        """Subdirectory must not be visited when parent has no README.md"""
+        parent = "/root/parent"
+        child = "/root/parent/child"
+        parent_readme = os.path.join(parent, docs2md.README_FILENAME)
+
+        # os.walk returns parent with child in dirnames; child also listed separately
+        walk_entries = [
+            (parent, ["child"], []),
+            (child, [], []),
+        ]
+        readme_exists_map = {parent_readme: False}
+        readme_content_map = {}
+
+        visited, stats = self._run(walk_entries, readme_exists_map, readme_content_map)
+
+        self.assertNotIn(
+            parent, visited, "parent without README should not be processed"
+        )
+        self.assertNotIn(
+            child, visited, "child of parent without README should not be visited"
+        )
+
+    def test_subdir_skipped_when_parent_readme_has_no_aikb_tag(self):
+        """Subdirectory must not be visited when parent README lacks doc2md#aikb tag"""
+        parent = "/root/parent"
+        child = "/root/parent/child"
+        parent_readme = os.path.join(parent, docs2md.README_FILENAME)
+
+        walk_entries = [
+            (parent, ["child"], []),
+            (child, [], []),
+        ]
+        readme_exists_map = {parent_readme: True}
+        readme_content_map = {parent_readme: "# No aikb tag here"}
+
+        visited, stats = self._run(walk_entries, readme_exists_map, readme_content_map)
+
+        self.assertNotIn(
+            parent, visited, "parent without aikb tag should not be processed"
+        )
+        self.assertNotIn(
+            child, visited, "child of parent without aikb tag should not be visited"
+        )
+
+    def test_subdir_visited_when_parent_has_readme_with_aikb(self):
+        """Subdirectory must be visited when parent README has doc2md#aikb tag"""
+        parent = "/root/parent"
+        child = "/root/parent/child"
+        parent_readme = os.path.join(parent, docs2md.README_FILENAME)
+        child_readme = os.path.join(child, docs2md.README_FILENAME)
+
+        walk_entries = [
+            (parent, ["child"], []),
+            (child, [], []),
+        ]
+        readme_exists_map = {parent_readme: True, child_readme: True}
+        readme_content_map = {
+            parent_readme: f"# Test\n{docs2md.TAG_AIKB}\n",
+            child_readme: f"# Test\n{docs2md.TAG_AIKB}\n",
+        }
+
+        visited, stats = self._run(walk_entries, readme_exists_map, readme_content_map)
+
+        self.assertIn(parent, visited, "parent with aikb should be processed")
+        self.assertIn(child, visited, "child of parent with aikb should be visited")
+        self.assertEqual(stats["dirs_skipped"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
