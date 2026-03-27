@@ -1,34 +1,85 @@
-#root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\manual_tests\bugs'
-#pause_before_exit: false
-#force_md_generation: false
-#log_level: INFO # INFO DEBUG ERROR
-#git_commit: false
-#force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
-#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai/-/tree/main/sandbox/doc2md-tests'
+# tests
+root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\manual_tests'
+force_md_generation: true
+git_commit: ture
+force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
 
 # FA
-root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\FA'
-pause_before_exit: false
-force_md_generation: false
-log_level: INFO # INFO DEBUG ERROR
-git_commit: true
-force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
-git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-fa/-/tree/main/FA'
+#root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\FA'
+#force_md_generation: false
+#git_commit: true
+#force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-fa/-/tree/main/FA'
 
 # OptiFlow
 #root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\OptiFlow'
-#pause_before_exit: false
 #force_md_generation: false
-#log_level: INFO # INFO DEBUG ERROR
 #git_commit: true
 #force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
 #git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-of/-/tree/main/OptiFlow'
 
 # Private SaaS
 #root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\PrivateSaaS'
-#pause_before_exit: false
-#force_md_generation: true
-#log_level: INFO # INFO DEBUG ERROR
+#force_md_generation: false
 #git_commit: true
-#force_readme_git_commit: true # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
+#force_readme_git_commit: false # When true and git_commit is true, commits each README.md file (if no skip readme tag in readme file)
 #git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-psaas/-/tree/main/PrivateSaaS'
+
+common:
+  pause_before_exit: false
+  log_level: INFO # INFO DEBUG ERROR
+  supported_extensions:
+    - .asciidoc
+    - .biblatex
+    - .bibtex
+    - .bits
+    - .commonmark
+    - .commonmark_x
+    - .creole
+    - .csljson
+    - .csv
+    - .djot
+    - .docbook
+    - .docx
+    - .dokuwiki
+    - .eml
+    - .endnotexml
+    - .epub
+    - .fb2
+    - .gfm
+    - .haddock
+    - .html
+    - .ipynb
+    - .jats
+    - .jira
+    - .json
+    - .latex
+    - .man
+    - .markdown
+    - .markdown_github
+    - .markdown_mmd
+    - .markdown_phpextra
+    - .markdown_strict
+    - .mdoc
+    - .mediawiki
+    - .muse
+    - .native
+    - .odt
+    - .opml
+    - .org
+    - .pod
+    - .pptx
+    - .ris
+    - .rst
+    - .rtf
+    - .t2t
+    - .textile
+    - .tikiwiki
+    - .tsv
+    - .twiki
+    - .typst
+    - .vimwiki
+    - .xlsx
+    - .xml
+    - .txt

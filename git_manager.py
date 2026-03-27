@@ -20,7 +20,7 @@ class GitManager:
         # Get GitLab access token
         self.token = os.getenv('GIT_ACCESS_TOKEN')
         if not self.token:
-            raise ValueError("GitLab access token not found in .env file")
+            raise ValueError("'GIT_ACCESS_TOKEN' access token not found in .env file")
     
     def push_commit_file(self, file_path, git_path, commit_message, git_child_path=None):
         """

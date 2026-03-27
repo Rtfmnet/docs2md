@@ -23,37 +23,82 @@ _git_manager = None
 _git_manager_error = False
 
 # Constants
-CONFIG_FILE = 'docs2md.yaml'
-LOG_DIR = 'logs'
-LOG_FILE = os.path.join(LOG_DIR, 'docs2md.log')
-LOG_MAX_BYTES = 32*4096  # 32KB
-LOG_DEFAULT_LEVEL = 'INFO'
-README_FILENAME = 'README.md'
-MD_DIR_NAME = 'md'
-TAG_SKIPDIR = 'doc2md#skipdir'
-TAG_SKIPFILE = 'doc2md#skipfile'
-TAG_MASK_PREFIX = 'doc2md#mask='
+CONFIG_FILE = "docs2md.yaml"
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "docs2md.log")
+LOG_MAX_BYTES = 32 * 4096  # 32KB
+LOG_DEFAULT_LEVEL = "INFO"
+README_FILENAME = "README.md"
+MD_DIR_NAME = "md"
+TAG_AIKB = "doc2md#aikb"
+TAG_SKIPFILE = "doc2md#skipfile"
+TAG_MASK_PREFIX = "doc2md#mask="
 
-SUPPORTED_EXTENSIONS = {
-    '.asciidoc', '.biblatex', '.bibtex', '.bits', '.commonmark', '.commonmark_x',
-    '.creole', '.csljson', '.csv', '.djot', '.docbook', '.docx', '.dokuwiki',
-    '.endnotexml', '.epub', '.fb2', '.gfm', '.haddock', '.html', '.ipynb', '.jats',
-    '.jira', '.json', '.latex', '.man', '.markdown', '.markdown_github',
-    '.markdown_mmd', '.markdown_phpextra', '.markdown_strict', '.mdoc', '.mediawiki',
-    '.muse', '.native', '.odt', '.opml', '.org', '.pod', '.pptx', '.ris', '.rst',
-    '.rtf', '.t2t', '.textile', '.tikiwiki', '.tsv', '.twiki', '.typst', '.vimwiki',
-    '.xlsx', '.xml', '.txt'
+DEFAULT_SUPPORTED_EXTENSIONS = {
+    ".asciidoc",
+    ".biblatex",
+    ".bibtex",
+    ".bits",
+    ".commonmark",
+    ".commonmark_x",
+    ".creole",
+    ".csljson",
+    ".csv",
+    ".djot",
+    ".docbook",
+    ".docx",
+    ".dokuwiki",
+    ".eml",
+    ".endnotexml",
+    ".epub",
+    ".fb2",
+    ".gfm",
+    ".haddock",
+    ".html",
+    ".ipynb",
+    ".jats",
+    ".jira",
+    ".json",
+    ".latex",
+    ".man",
+    ".markdown",
+    ".markdown_github",
+    ".markdown_mmd",
+    ".markdown_phpextra",
+    ".markdown_strict",
+    ".mdoc",
+    ".mediawiki",
+    ".muse",
+    ".native",
+    ".odt",
+    ".opml",
+    ".org",
+    ".pod",
+    ".pptx",
+    ".ris",
+    ".rst",
+    ".rtf",
+    ".t2t",
+    ".textile",
+    ".tikiwiki",
+    ".tsv",
+    ".twiki",
+    ".typst",
+    ".vimwiki",
+    ".xlsx",
+    ".xml",
+    ".txt",
 }
 
 
-def setup_logging(log_level='INFO'):
+def setup_logging(log_level="INFO"):
     """Initialize logging configuration with configurable log level"""
     # Configure root logger to prevent duplicate logs
     root_logger = logging.getLogger()
     root_logger.handlers = []
 
     # Configure the docs2md logger
-    logger = logging.getLogger('docs2md')
+    logger = logging.getLogger("docs2md")
     # Remove existing handlers if any
     logger.handlers = []
 
@@ -70,9 +115,7 @@ def setup_logging(log_level='INFO'):
     # Rotating file handler
     try:
         file_handler = RotatingFileHandler(
-            LOG_FILE,
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=5
+            LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=5
         )
         file_handler.setLevel(numeric_level)
     except Exception as e:
@@ -84,7 +127,7 @@ def setup_logging(log_level='INFO'):
     console_handler.setLevel(numeric_level)
 
     # Formatter
-    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
     if file_handler:
         file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
@@ -102,7 +145,7 @@ def setup_logging(log_level='INFO'):
 def load_config():
     """Load configuration from YAML file"""
     try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         return config
     except FileNotFoundError:
@@ -115,23 +158,24 @@ def verify_pandoc():
     """Verify if pandoc is installed and accessible"""
     try:
         # Run pandoc --version to check if pandoc is installed
-        result = subprocess.run(['pandoc', '--version'], 
-                              capture_output=True, 
-                              text=True, 
-                              check=False)
+        result = subprocess.run(
+            ["pandoc", "--version"], capture_output=True, text=True, check=False
+        )
 
         if result.returncode == 0:
             # Extract version information
             version_info = "Unknown version"
-            if hasattr(result, 'stdout') and result.stdout:
-                version_info = result.stdout.strip().split('\n')[0]
+            if hasattr(result, "stdout") and result.stdout:
+                version_info = result.stdout.strip().split("\n")[0]
             logging.info(f"Pandoc found: {version_info}")
             return True
         else:
             error_output = "Unknown error"
-            if hasattr(result, 'stderr') and result.stderr:
+            if hasattr(result, "stderr") and result.stderr:
                 error_output = result.stderr
-            logging.error("Pandoc command failed with error code: " + str(result.returncode))
+            logging.error(
+                "Pandoc command failed with error code: " + str(result.returncode)
+            )
             logging.error("Error output: " + error_output)
             return False
     except FileNotFoundError:
@@ -145,15 +189,15 @@ def verify_pandoc():
 def read_readme(readme_path):
     """Read README.md file content"""
     try:
-        with open(readme_path, 'r', encoding='utf-8') as f:
+        with open(readme_path, "r", encoding="utf-8") as f:
             return f.read()
     except Exception as e:
         return None
 
 
-def check_skipdir(readme_content):
-    """Check if directory should be skipped based on README content"""
-    if readme_content and TAG_SKIPDIR in readme_content:
+def check_aikb_tag(readme_content):
+    """Check if README content contains the doc2md#aikb tag (directory should be processed)"""
+    if readme_content and TAG_AIKB in readme_content:
         return True
     return False
 
@@ -163,8 +207,8 @@ def extract_masks(readme_content):
     masks = []
     if not readme_content:
         return masks
-    
-    for line in readme_content.split('\n'):
+
+    for line in readme_content.split("\n"):
         if TAG_MASK_PREFIX in line:
             # Extract regex pattern from doc2md#mask='pattern' format
             match = re.search(rf"{re.escape(TAG_MASK_PREFIX)}['\"]([^'\"]+)['\"]", line)
@@ -173,15 +217,25 @@ def extract_masks(readme_content):
     return masks
 
 
-def collect_files_in_directory(directory):
+def get_supported_extensions(config=None):
+    """Return the set of supported extensions from config if available, else fall back to the hardcoded set"""
+    if config:
+        extensions = config.get("common", {}).get("supported_extensions")
+        if extensions:
+            return set(extensions)
+    return DEFAULT_SUPPORTED_EXTENSIONS
+
+
+def collect_files_in_directory(directory, config=None):
     """Collect all files with supported extensions in current directory only"""
+    supported = get_supported_extensions(config)
     files = []
     try:
         for item in os.listdir(directory):
             item_path = os.path.join(directory, item)
             if os.path.isfile(item_path):
                 ext = os.path.splitext(item)[1].lower()
-                if ext in SUPPORTED_EXTENSIONS:
+                if ext in supported:
                     files.append(item)
     except Exception as e:
         return []
@@ -192,7 +246,7 @@ def apply_masks(files, masks):
     """Apply regex masks to filter files"""
     if not masks:
         return files
-    
+
     filtered = []
     for file in files:
         for mask in masks:
@@ -209,16 +263,13 @@ def is_file_referenced_in_readme(filename, readme_content):
     """Check if file is referenced in README (case insensitive, word boundary)"""
     if not readme_content:
         return False
-    
+
     # Get filename with and without extension
     name_without_ext = os.path.splitext(filename)[0]
-    
+
     # Create patterns with word boundaries
-    patterns = [
-        rf'\b{re.escape(filename)}\b',
-        rf'\b{re.escape(name_without_ext)}\b'
-    ]
-    
+    patterns = [rf"\b{re.escape(filename)}\b", rf"\b{re.escape(name_without_ext)}\b"]
+
     for pattern in patterns:
         if re.search(pattern, readme_content, re.IGNORECASE):
             return True
@@ -229,14 +280,11 @@ def get_file_reference_line(filename, readme_content):
     """Extract first line where file is referenced in README"""
     if not readme_content:
         return None
-    
+
     name_without_ext = os.path.splitext(filename)[0]
-    patterns = [
-        rf'\b{re.escape(filename)}\b',
-        rf'\b{re.escape(name_without_ext)}\b'
-    ]
-    
-    for line in readme_content.split('\n'):
+    patterns = [rf"\b{re.escape(filename)}\b", rf"\b{re.escape(name_without_ext)}\b"]
+
+    for line in readme_content.split("\n"):
         for pattern in patterns:
             if re.search(pattern, line, re.IGNORECASE):
                 return line
@@ -276,8 +324,9 @@ def filter_files_by_readme(files, readme_content, has_masks, logger=None):
     return filtered
 
 
-def get_target_md_path(source_file, directory):
+def get_target_md_path(source_file, directory, config=None):
     """Determine target MD file path"""
+    supported = get_supported_extensions(config)
     base_name = os.path.splitext(source_file)[0]
     ext = os.path.splitext(source_file)[1]
 
@@ -295,13 +344,21 @@ def get_target_md_path(source_file, directory):
                 if os.path.isfile(item_path):
                     item_base = os.path.splitext(item)[0]
                     item_ext = os.path.splitext(item)[1].lower()
-                    if item_base == base_name and item_ext in SUPPORTED_EXTENSIONS and item != source_file:
+                    if (
+                        item_base == base_name
+                        and item_ext in supported
+                        and item != source_file
+                    ):
                         potential_conflicts.append(item)
             except:
                 # If we can't check if it's a file in mock, try by extension
                 item_base = os.path.splitext(item)[0]
                 item_ext = os.path.splitext(item)[1].lower()
-                if item_base == base_name and item_ext in SUPPORTED_EXTENSIONS and item != source_file:
+                if (
+                    item_base == base_name
+                    and item_ext in supported
+                    and item != source_file
+                ):
                     potential_conflicts.append(item)
     except:
         pass
@@ -338,17 +395,19 @@ def sync_readme_to_git(readme_path, config, logger):
         bool: True if sync was successful or not needed, False if it failed
     """
     # Check if git commit and force_readme_git_commit are enabled
-    if not config.get('git_commit', False) or not config.get('force_readme_git_commit', False):
+    if not config.get("git_commit", False) or not config.get(
+        "force_readme_git_commit", False
+    ):
         logger.debug("README git commit not enabled in config, skipping sync")
         return False
 
-    # Check if file exists and contains skipdir tag
+    # Check if file exists and contains aikb tag
     try:
         if os.path.exists(readme_path):
-            with open(readme_path, 'r', encoding='utf-8') as f:
+            with open(readme_path, "r", encoding="utf-8") as f:
                 readme_content = f.read()
-                if TAG_SKIPDIR in readme_content:
-                    logger.debug(f"Skipping README sync due to {TAG_SKIPDIR} tag")
+                if not check_aikb_tag(readme_content):
+                    logger.debug(f"Skipping README sync: {TAG_AIKB} tag not found")
                     return False
         else:
             logger.debug("README file doesn't exist, skipping sync")
@@ -382,7 +441,7 @@ def sync_to_git(file_path, config, logger):
     global _git_manager, _git_manager_error
 
     # Check if git commit is enabled in config
-    if not config.get('git_commit', False):
+    if not config.get("git_commit", False):
         logger.debug("Git commit not enabled in config, skipping sync")
         return False
 
@@ -395,7 +454,7 @@ def sync_to_git(file_path, config, logger):
     if _git_manager is None:
         try:
             # Read git URL from config
-            git_url = config.get('git_url')
+            git_url = config.get("git_url")
             if not git_url:
                 logger.error("Git URL not specified in config")
                 _git_manager_error = True
@@ -410,7 +469,7 @@ def sync_to_git(file_path, config, logger):
             success, details = _git_manager.verify_path(git_url)
 
             if not success:
-                error_msg = details.get('error', 'Unknown error')
+                error_msg = details.get("error", "Unknown error")
                 logger.error(f"Git path verification failed: {error_msg}")
                 _git_manager_error = True
                 return False
@@ -425,7 +484,7 @@ def sync_to_git(file_path, config, logger):
     # Calculate child_path
     try:
         # Get root folder from config
-        root_folder = config.get('root_folder')
+        root_folder = config.get("root_folder")
         if not root_folder:
             logger.error("root_folder not specified in config")
             return False
@@ -446,14 +505,19 @@ def sync_to_git(file_path, config, logger):
 
             # Make sure file path starts with root path
             if not norm_file.startswith(norm_root):
-                logger.error(f"File path {norm_file} is not under root folder {norm_root}")
+                logger.error(
+                    f"File path {norm_file} is not under root folder {norm_root}"
+                )
                 return False
 
             # Calculate child path
             child_path = os.path.relpath(os.path.dirname(norm_file), norm_root)
 
             # Remove 'md' dir if it's the last dir
-            if child_path.endswith(os.path.sep + MD_DIR_NAME) or child_path == MD_DIR_NAME:
+            if (
+                child_path.endswith(os.path.sep + MD_DIR_NAME)
+                or child_path == MD_DIR_NAME
+            ):
                 child_path = os.path.dirname(child_path)
 
             logger.debug(f"Calculated child path: {child_path}")
@@ -463,22 +527,19 @@ def sync_to_git(file_path, config, logger):
             return False
 
         # Commit and push file
-        git_url = config.get('git_url')
-        commit_message = 'doc2md#sync'
+        git_url = config.get("git_url")
+        commit_message = "doc2md#sync"
 
         logger.debug(f"Pushing file {os.path.basename(file_path)} to git")
         success, details = _git_manager.push_commit_file(
-            file_path, 
-            git_url, 
-            commit_message, 
-            git_child_path=child_path
+            file_path, git_url, commit_message, git_child_path=child_path
         )
 
         if success:
             logger.debug(f"Git push successful: {details.get('message', '')}")
             return True
         else:
-            error_msg = details.get('error', 'Unknown error')
+            error_msg = details.get("error", "Unknown error")
             logger.error(f"Git push failed: {error_msg}")
             return False
 
@@ -495,7 +556,7 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
         os.makedirs(target_dir, exist_ok=True)
 
         # Use pandoc to convert the file
-        cmd = ['pandoc', source_path, '-o', target_path]
+        cmd = ["pandoc", source_path, "-o", target_path]
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
         # Check if conversion was successful
@@ -510,7 +571,7 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
 
             return True, f"MD generated{', commited to git' if commited_to_git else ''}"
         else:
-            error_msg = result.stderr if hasattr(result, 'stderr') else 'Unknown error'
+            error_msg = result.stderr if hasattr(result, "stderr") else "Unknown error"
             logger.error(f"Pandoc conversion failed: {error_msg}")
             return False, f"Error: {error_msg[:100]}"
 
@@ -522,7 +583,7 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
 def process_file(file, directory, force_generation, logger, config):
     """Process a single file for conversion"""
     source_path = os.path.join(directory, file)
-    target_path = get_target_md_path(file, directory)
+    target_path = get_target_md_path(file, directory, config)
 
     logger.debug(f"Processing file: {file} in {directory}")
     logger.debug(f"Target MD path: {target_path}")
@@ -561,27 +622,27 @@ def process_directory(directory, config, logger, stats, important_logs=None):
     # This log is kept as INFO per requirements
     logger.info(directory)
 
-    dir_stats = {'skipped': 0, 'generated': 0, 'errors': 0}
+    dir_stats = {"skipped": 0, "generated": 0, "errors": 0}
 
     # Check for README.md
     readme_path = os.path.join(directory, README_FILENAME)
     if not os.path.exists(readme_path):
         # This log is kept as INFO per requirements
         logger.info(f"Skipped due to missing {README_FILENAME}")
-        stats['dirs_skipped'] += 1
+        stats["dirs_skipped"] += 1
         return
 
     # Read README content
     readme_content = read_readme(readme_path)
     logger.debug(f"README content found: '{readme_content}'")
 
-    # Check for skipdir tag
-    if check_skipdir(readme_content):
+    # Check for doc2md#aikb tag — skip directory if tag is missing
+    if not check_aikb_tag(readme_content):
         # This log is kept as INFO per requirements
-        logger.info(f"Skipped due to {TAG_SKIPDIR} tag")
-        stats['dirs_skipped'] += 1
+        logger.info(f"Skipped due to missing {TAG_AIKB} tag in {README_FILENAME}")
+        stats["dirs_skipped"] += 1
         return
-    
+
     # Sync README to Git if configured
     result = sync_readme_to_git(readme_path, config, logger)
     # Save important logs for summary
@@ -594,7 +655,7 @@ def process_directory(directory, config, logger, stats, important_logs=None):
         logger.debug(f"Masks found: {masks}")
 
     # Collect files
-    files = collect_files_in_directory(directory)
+    files = collect_files_in_directory(directory, config)
     logger.debug(f"Files with supported extensions: {files}")
 
     # Apply masks
@@ -611,64 +672,43 @@ def process_directory(directory, config, logger, stats, important_logs=None):
     # Process each file
     for file in files:
         success, message = process_file(
-            file,
-            directory,
-            config.get('force_md_generation', False),
-            logger,
-            config
+            file, directory, config.get("force_md_generation", False), logger, config
         )
 
         # This log is kept as INFO per requirements
         logger.info(f"{file} {message}")
-        
+
         if success is True:
-            dir_stats['generated'] += 1
-            stats['files_generated'] += 1
+            dir_stats["generated"] += 1
+            stats["files_generated"] += 1
             # Save important logs for summary
             if important_logs is not None:
                 important_logs.append(f"{file} {message} in {directory}")
         elif success is False:
-            dir_stats['errors'] += 1
-            stats['files_errors'] += 1
+            dir_stats["errors"] += 1
+            stats["files_errors"] += 1
+            # Save error logs for summary
+            if important_logs is not None:
+                important_logs.append(f"ERROR: {file} {message} in {directory}")
         else:
-            dir_stats['skipped'] += 1
-            stats['files_skipped'] += 1
+            dir_stats["skipped"] += 1
+            stats["files_skipped"] += 1
 
     if files:
-        logger.debug(f"Skipped: {dir_stats['skipped']}; Generated: {dir_stats['generated']}; Errors: {dir_stats['errors']}")
+        logger.debug(
+            f"Skipped: {dir_stats['skipped']}; Generated: {dir_stats['generated']}; Errors: {dir_stats['errors']}"
+        )
     else:
         logger.debug("No files to process in this directory.")
 
-    stats['dirs_processed'] += 1
+    stats["dirs_processed"] += 1
 
 
-def process_directories_recursively(root_folder, config, logger, stats, important_logs=None):
+def process_directories_recursively(
+    root_folder, config, logger, stats, important_logs=None
+):
     """Process all directories recursively starting from root"""
-    skip_dirs = set()
-
     for dirpath, dirnames, filenames in os.walk(root_folder):
-        # Check if current directory should be skipped
-        should_skip = False
-        for skip_dir in skip_dirs:
-            if dirpath.startswith(skip_dir):
-                should_skip = True
-                break
-
-        if should_skip:
-            continue
-
-        # Check if this directory has skipdir tag
-        readme_path = os.path.join(dirpath, README_FILENAME)
-        if os.path.exists(readme_path):
-            readme_content = read_readme(readme_path)
-            if check_skipdir(readme_content):
-                skip_dirs.add(dirpath)
-                # These logs are kept as INFO per requirements
-                logger.info(dirpath)
-                logger.info(f"Skipped due to {TAG_SKIPDIR} tag")
-                stats['dirs_skipped'] += 1
-                continue
-
         process_directory(dirpath, config, logger, stats, important_logs)
 
 
@@ -677,20 +717,20 @@ def main():
     # Load config early to get log level
     try:
         config = load_config()
-        log_level = config.get('log_level', LOG_DEFAULT_LEVEL)
+        log_level = config.get("common", {}).get("log_level", LOG_DEFAULT_LEVEL)
     except Exception as e:
         print(f"ERROR loading config: {e}")
         log_level = LOG_DEFAULT_LEVEL
 
     # Initialize logging with config-specified level
     logger = setup_logging(log_level)
-    
+
     # List to store important log messages for summary
     important_logs = []
 
     try:
         # Log start time - kept as INFO per requirements
-        start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(start_time)
 
         # Verify pandoc
@@ -699,7 +739,7 @@ def main():
             sys.exit(1)
 
         # Get root folder
-        root_folder = config.get('root_folder')
+        root_folder = config.get("root_folder")
         if not root_folder:
             logger.error("root_folder not specified in config")
             sys.exit(1)
@@ -718,15 +758,17 @@ def main():
 
         # Process directories
         stats = {
-            'dirs_processed': 0,
-            'dirs_skipped': 0,
-            'files_generated': 0,
-            'files_skipped': 0,
-            'files_errors': 0
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
         }
-        
-        process_directories_recursively(root_folder, config, logger, stats, important_logs)
-        
+
+        process_directories_recursively(
+            root_folder, config, logger, stats, important_logs
+        )
+
         # Show summary of results - kept as INFO per requirements
         logger.info("\nSUMMARY:")
         logger.info(f"Directories processed: {stats['dirs_processed']}")
@@ -734,7 +776,7 @@ def main():
         logger.info(f"Files generated: {stats['files_generated']}")
         logger.info(f"Files skipped as actual: {stats['files_skipped']}")
         logger.info(f"Files with errors: {stats['files_errors']}")
-        
+
         # Show important logs in summary
         if important_logs:
             logger.info("\nDetailed changes:")
@@ -743,8 +785,8 @@ def main():
         logger.debug("Execution complete.")
 
         # Pause if configured
-        if config.get('pause_before_exit', False):
-            input('Press any key to exit...')
+        if config.get("common", {}).get("pause_before_exit", False):
+            input("Press any key to exit...")
 
     except Exception as e:
         logger.error(str(e))
@@ -752,7 +794,7 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Remove the basicConfig as we're setting up logging in setup_logging()
     try:
         main()
