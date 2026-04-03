@@ -18,6 +18,12 @@ import yaml
 from git_sync import GitManager
 
 
+class GitFatalError(Exception):
+    """Raised when a critical git error occurs that should stop all processing."""
+
+    pass
+
+
 # Class variable to track GitManager initialization status
 _git_manager = None
 _git_manager_error = False
@@ -298,17 +304,18 @@ def has_skipfile_tag(line):
     return False
 
 
-def filter_files_by_readme(files, readme_content, has_masks, logger=None):
+def filter_files_by_readme(files, readme_content, has_masks, logger=None, rel_dir=None):
     """Filter files based on README content"""
     filtered = []
 
     for file in files:
+        rel_file = os.path.join(rel_dir, file) if rel_dir and rel_dir != "." else file
         is_referenced = is_file_referenced_in_readme(file, readme_content)
 
         # If no masks and file is not referenced, skip it
         if not has_masks and not is_referenced:
             if logger:
-                logger.info(f"{file} Skipped due to not listed in README.md")
+                logger.debug(f'"{rel_file}" Skipped due to not listed in README.md')
             continue
 
         # If file is referenced, check for skipfile tag
@@ -316,7 +323,7 @@ def filter_files_by_readme(files, readme_content, has_masks, logger=None):
             ref_line = get_file_reference_line(file, readme_content)
             if ref_line and has_skipfile_tag(ref_line):
                 if logger:
-                    logger.info(f"{file} Skipped due to `{TAG_SKIPFILE}` tag")
+                    logger.debug(f'"{rel_file}" Skipped due to `{TAG_SKIPFILE}` tag')
                 continue
 
         filtered.append(file)
@@ -420,7 +427,7 @@ def sync_readme_to_git(readme_path, config, logger):
     logger.debug(f"Syncing README file to git: {readme_path}")
     result = sync_to_git(readme_path, config, logger)
     if result:
-        logger.info(f"README.md commited to git")
+        logger.debug(f"README.md commited to git")
     else:
         logger.error(f"Failed to commit README.md to git")
     return result
@@ -452,34 +459,33 @@ def sync_to_git(file_path, config, logger):
 
     # Initialize GitManager if needed
     if _git_manager is None:
+        # Read git URL from config
+        git_url = config.get("git_url")
+        if not git_url:
+            logger.error("Git URL not specified in config")
+            _git_manager_error = True
+            raise GitFatalError("Git URL not specified in config")
+
+        # Initialize GitManager
+        logger.debug("Initializing GitManager")
         try:
-            # Read git URL from config
-            git_url = config.get("git_url")
-            if not git_url:
-                logger.error("Git URL not specified in config")
-                _git_manager_error = True
-                return False
-
-            # Initialize GitManager
-            logger.debug("Initializing GitManager")
             _git_manager = GitManager()
-
-            # Verify git path
-            logger.debug(f"Verifying git path: {git_url}")
-            success, details = _git_manager.verify_path(git_url)
-
-            if not success:
-                error_msg = details.get("error", "Unknown error")
-                logger.error(f"Git path verification failed: {error_msg}")
-                _git_manager_error = True
-                return False
-
-            logger.debug("Git path verified successfully")
-
         except Exception as e:
             logger.error(f"Failed to initialize GitManager: {str(e)}")
             _git_manager_error = True
-            return False
+            raise GitFatalError(f"Failed to initialize GitManager: {str(e)}") from e
+
+        # Verify git path
+        logger.debug(f"Verifying git path: {git_url}")
+        success, details = _git_manager.verify_path(git_url)
+
+        if not success:
+            error_msg = details.get("error", "Unknown error")
+            logger.error(f"Git path verification failed: {error_msg}")
+            _git_manager_error = True
+            raise GitFatalError(f"Git path verification failed: {error_msg}")
+
+        logger.debug("Git path verified successfully")
 
     # Calculate child_path
     try:
@@ -575,10 +581,21 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
 
             return True, f"MD generated{', commited to git' if commited_to_git else ''}"
         else:
-            error_msg = result.stderr if hasattr(result, "stderr") else "Unknown error"
-            logger.error(f"Pandoc conversion failed: {error_msg}")
+            error_msg = (
+                result.stderr.strip()
+                if hasattr(result, "stderr") and result.stderr
+                else "Unknown error"
+            )
+            source_name = os.path.basename(source_path)
+            cmd_str = " ".join(cmd)
+            logger.error(
+                f'Pandoc conversion failed for "{source_name}": {error_msg}\n'
+                f"  Command: {cmd_str}"
+            )
             return False, f"Error: {error_msg[:100]}"
 
+    except GitFatalError:
+        raise
     except Exception as e:
         logger.error(f"Failed to convert {source_path}: {str(e)}")
         return False, f"Error: {str(e)[:100]}"
@@ -621,18 +638,27 @@ def process_file(file, directory, force_generation, logger, config):
         return None, f"Skipped due to {skip_reason}"
 
 
-def process_directory(directory, config, logger, stats, important_logs=None):
+def process_directory(
+    directory, config, logger, stats, important_logs=None, root_folder=None
+):
     """Process a single directory"""
-    # This log is kept as INFO per requirements
-    logger.info(directory)
+    # Compute relative path label for logging
+    if root_folder:
+        try:
+            rel_dir = os.path.relpath(directory, root_folder)
+        except ValueError:
+            rel_dir = directory
+    else:
+        rel_dir = directory
+
+    logger.debug(f'Processing: "{rel_dir}"')
 
     dir_stats = {"skipped": 0, "generated": 0, "errors": 0}
 
     # Check for README.md
     readme_path = os.path.join(directory, README_FILENAME)
     if not os.path.exists(readme_path):
-        # This log is kept as INFO per requirements
-        logger.info(f"Skipped due to missing {README_FILENAME}")
+        logger.debug(f"Skipped due to missing {README_FILENAME}")
         stats["dirs_skipped"] += 1
         return
 
@@ -642,8 +668,7 @@ def process_directory(directory, config, logger, stats, important_logs=None):
 
     # Check for doc2md#aikb tag — skip directory if tag is missing
     if not check_aikb_tag(readme_content):
-        # This log is kept as INFO per requirements
-        logger.info(f"Skipped due to missing {TAG_AIKB} tag in {README_FILENAME}")
+        logger.debug(f"Skipped due to missing {TAG_AIKB} tag in {README_FILENAME}")
         stats["dirs_skipped"] += 1
         return
 
@@ -651,7 +676,7 @@ def process_directory(directory, config, logger, stats, important_logs=None):
     result = sync_readme_to_git(readme_path, config, logger)
     # Save important logs for summary
     if result and important_logs is not None:
-        important_logs.append(f"README.md commited to git in {directory}")
+        important_logs.append('"README.md" commited to git')
 
     # Extract masks
     masks = extract_masks(readme_content)
@@ -669,34 +694,37 @@ def process_directory(directory, config, logger, stats, important_logs=None):
         files = filtered_files
 
     # Filter by README
-    filtered_files = filter_files_by_readme(files, readme_content, bool(masks), logger)
+    filtered_files = filter_files_by_readme(
+        files, readme_content, bool(masks), logger, rel_dir=rel_dir
+    )
     logger.debug(f"Files after README filtering: {filtered_files}")
     files = filtered_files
 
     # Process each file
     for file in files:
+        rel_file = os.path.join(rel_dir, file) if rel_dir and rel_dir != "." else file
         success, message = process_file(
             file, directory, config.get("force_md_generation", False), logger, config
         )
 
-        # This log is kept as INFO per requirements
-        logger.info(f"{file} {message}")
-
         if success is True:
             dir_stats["generated"] += 1
             stats["files_generated"] += 1
+            logger.debug(f'"{rel_file}" {message}')
             # Save important logs for summary
             if important_logs is not None:
-                important_logs.append(f"{file} {message} in {directory}")
+                important_logs.append(f'"{rel_file}" {message}')
         elif success is False:
             dir_stats["errors"] += 1
             stats["files_errors"] += 1
+            logger.info(f'"{rel_file}" {message}')
             # Save error logs for summary
             if important_logs is not None:
-                important_logs.append(f"ERROR: {file} {message} in {directory}")
+                important_logs.append(f'ERROR: "{rel_file}" {message}')
         else:
             dir_stats["skipped"] += 1
             stats["files_skipped"] += 1
+            logger.debug(f'"{rel_file}" {message}')
 
     if files:
         logger.debug(
@@ -713,23 +741,25 @@ def process_directories_recursively(
 ):
     """Process all directories recursively starting from root"""
     for dirpath, dirnames, filenames in os.walk(root_folder):
+        try:
+            rel_dirpath = os.path.relpath(dirpath, root_folder)
+        except ValueError:
+            rel_dirpath = dirpath
         readme_path = os.path.join(dirpath, README_FILENAME)
         if not os.path.exists(readme_path):
-            logger.info(
-                f"Skipped (no {README_FILENAME}): {dirpath} — subdirectories will not be traversed"
-            )
+            logger.debug(f'"{rel_dirpath}" — Skipped (no {README_FILENAME})')
             stats["dirs_skipped"] += 1
             dirnames[:] = []
             continue
         readme_content = read_readme(readme_path)
         if not check_aikb_tag(readme_content):
-            logger.info(
-                f"Skipped (no {TAG_AIKB} tag): {dirpath} — subdirectories will not be traversed"
-            )
+            logger.debug(f'"{rel_dirpath}" — Skipped (no {TAG_AIKB} tag)')
             stats["dirs_skipped"] += 1
             dirnames[:] = []
             continue
-        process_directory(dirpath, config, logger, stats, important_logs)
+        process_directory(
+            dirpath, config, logger, stats, important_logs, root_folder=root_folder
+        )
 
 
 def main():
@@ -774,7 +804,10 @@ def main():
             sys.exit(1)
 
         # Root folder log - kept as INFO per requirements
-        logger.info(f"Root: {root_folder}")
+        logger.info(f'Files path: "{root_folder}"')
+        if config.get("git_commit", False):
+            git_url = config.get("git_url", "")
+            logger.info(f'Git path: "{git_url}"')
 
         # Process directories
         stats = {
@@ -790,7 +823,8 @@ def main():
         )
 
         # Show summary of results - kept as INFO per requirements
-        logger.info("\nSUMMARY:")
+        logger.info("")
+        logger.info("SUMMARY:")
         logger.info(f"Directories processed: {stats['dirs_processed']}")
         logger.info(f"Directories skipped: {stats['dirs_skipped']}")
         logger.info(f"Files generated: {stats['files_generated']}")
@@ -799,7 +833,8 @@ def main():
 
         # Show important logs in summary
         if important_logs:
-            logger.info("\nDetailed changes:")
+            logger.info("")
+            logger.info("Change log:")
             for log in important_logs:
                 logger.info(log)
         logger.debug("Execution complete.")
@@ -808,6 +843,9 @@ def main():
         if config.get("common", {}).get("pause_before_exit", False):
             input("Press any key to exit...")
 
+    except GitFatalError as e:
+        logger.error(f"Critical git error — stopping processing: {str(e)}")
+        sys.exit(1)
     except Exception as e:
         logger.error(str(e))
         print(f"ERROR: {str(e)}")

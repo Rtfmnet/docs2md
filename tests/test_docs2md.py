@@ -689,5 +689,808 @@ class TestProcessDirectoriesRecursively(unittest.TestCase):
         self.assertEqual(stats["dirs_skipped"], 0)
 
 
+class TestGitFatalError(unittest.TestCase):
+    """Test GitFatalError is raised on critical git errors and stops processing"""
+
+    def setUp(self):
+        """Reset GitManager module-level state before each test"""
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+
+    def _config(self):
+        return {
+            "git_commit": True,
+            "git_url": "https://gitlab.example.com/proj/-/tree/main",
+            "root_folder": "/root",
+        }
+
+    # ------------------------------------------------------------------
+    # sync_to_git raises GitFatalError on missing token
+    # ------------------------------------------------------------------
+    def test_sync_to_git_raises_on_missing_token(self):
+        """GitFatalError is raised when GIT_ACCESS_TOKEN is not set (GitManager init fails)"""
+        logger = Mock()
+        config = self._config()
+        with patch(
+            "docs2md.GitManager", side_effect=ValueError("'GIT_ACCESS_TOKEN' not found")
+        ):
+            with self.assertRaises(docs2md.GitFatalError) as ctx:
+                docs2md.sync_to_git("/root/file.md", config, logger)
+        self.assertIn("GitManager", str(ctx.exception))
+        logger.error.assert_called()
+
+    # ------------------------------------------------------------------
+    # sync_to_git raises GitFatalError on authentication failure
+    # ------------------------------------------------------------------
+    def test_sync_to_git_raises_on_auth_failure(self):
+        """GitFatalError is raised when verify_path returns an authentication error"""
+        logger = Mock()
+        config = self._config()
+        mock_gm = Mock()
+        mock_gm.verify_path.return_value = (
+            False,
+            {"error": "Authentication failed. Check your Git access token."},
+        )
+        with patch("docs2md.GitManager", return_value=mock_gm):
+            with self.assertRaises(docs2md.GitFatalError) as ctx:
+                docs2md.sync_to_git("/root/file.md", config, logger)
+        self.assertIn("Authentication failed", str(ctx.exception))
+        logger.error.assert_called()
+
+    # ------------------------------------------------------------------
+    # sync_to_git raises GitFatalError on invalid path
+    # ------------------------------------------------------------------
+    def test_sync_to_git_raises_on_invalid_path(self):
+        """GitFatalError is raised when verify_path returns a path-not-found error"""
+        logger = Mock()
+        config = self._config()
+        mock_gm = Mock()
+        mock_gm.verify_path.return_value = (
+            False,
+            {"error": "Path not found: /some/path"},
+        )
+        with patch("docs2md.GitManager", return_value=mock_gm):
+            with self.assertRaises(docs2md.GitFatalError) as ctx:
+                docs2md.sync_to_git("/root/file.md", config, logger)
+        self.assertIn("Path not found", str(ctx.exception))
+
+    # ------------------------------------------------------------------
+    # sync_to_git raises GitFatalError when git_url is missing from config
+    # ------------------------------------------------------------------
+    def test_sync_to_git_raises_on_missing_git_url(self):
+        """GitFatalError is raised when git_url is absent from config"""
+        logger = Mock()
+        config = {"git_commit": True, "root_folder": "/root"}  # no git_url
+        with self.assertRaises(docs2md.GitFatalError) as ctx:
+            docs2md.sync_to_git("/root/file.md", config, logger)
+        self.assertIn("Git URL", str(ctx.exception))
+        logger.error.assert_called()
+
+    # ------------------------------------------------------------------
+    # GitFatalError propagates through convert_to_markdown
+    # ------------------------------------------------------------------
+    @patch("subprocess.run")
+    @patch("os.makedirs")
+    def test_git_fatal_error_propagates_through_convert_to_markdown(
+        self, mock_makedirs, mock_run
+    ):
+        """GitFatalError raised in sync_to_git is not swallowed by convert_to_markdown"""
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_run.return_value = mock_result
+        logger = Mock()
+        config = self._config()
+        with patch(
+            "docs2md.sync_to_git",
+            side_effect=docs2md.GitFatalError("auth failed"),
+        ):
+            with self.assertRaises(docs2md.GitFatalError):
+                docs2md.convert_to_markdown("/src.docx", "/dst.md", logger, config)
+
+    # ------------------------------------------------------------------
+    # main() catches GitFatalError and exits with code 1
+    # ------------------------------------------------------------------
+    def test_main_exits_on_git_fatal_error(self):
+        """main() catches GitFatalError, logs the error, and calls sys.exit(1)"""
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/root",
+                    "git_commit": True,
+                    "git_url": "https://gitlab.example.com/proj/-/tree/main",
+                    "common": {},
+                },
+            ),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch(
+                "docs2md.process_directories_recursively",
+                side_effect=docs2md.GitFatalError("Authentication failed"),
+            ),
+            patch("sys.exit") as mock_exit,
+        ):
+            docs2md.main()
+            mock_exit.assert_called_with(1)
+
+
+class TestOutputLogFormatting(unittest.TestCase):
+    """Test refined log output formatting"""
+
+    # ------------------------------------------------------------------
+    # process_directory: Processing: "<relative_path>"
+    # ------------------------------------------------------------------
+    def test_process_directory_logs_relative_path(self):
+        """process_directory logs 'Processing: \"<rel_path>\"' using root_folder param"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = f"doc2md#aikb\n"
+
+        with (
+            patch("os.path.join", side_effect=os.path.join),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+        ):
+            docs2md.process_directory(
+                "/root/subdir",
+                config,
+                logger,
+                stats,
+                important_logs=None,
+                root_folder="/root",
+            )
+
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('Processing: "subdir"' in m for m in logged_msgs),
+            f"Expected 'Processing: \"subdir\"' in logs, got: {logged_msgs}",
+        )
+
+    def test_process_directory_logs_dot_for_root_itself(self):
+        """process_directory logs 'Processing: \".\"' when directory == root_folder"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\n"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+        ):
+            docs2md.process_directory(
+                "/root", config, logger, stats, important_logs=None, root_folder="/root"
+            )
+
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('Processing: "."' in m for m in logged_msgs),
+            f"Expected 'Processing: \".\"' in logs, got: {logged_msgs}",
+        )
+
+    # ------------------------------------------------------------------
+    # process_directories_recursively: skipped dir uses relative path
+    # ------------------------------------------------------------------
+    def test_skipped_dir_log_uses_relative_path(self):
+        """Skipped dir log shows relative path in quotes, not full absolute path"""
+        logger = Mock()
+        config = {}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        walk_entries = [("/root/sub1", [], [])]
+
+        with (
+            patch("docs2md.os.walk", return_value=iter(walk_entries)),
+            patch("docs2md.os.path.exists", return_value=False),
+        ):
+            docs2md.process_directories_recursively("/root", config, logger, stats)
+
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        # Should contain relative path in quotes, NOT full absolute path as-is
+        self.assertTrue(
+            any('"sub1"' in m for m in logged_msgs),
+            f"Expected '\"sub1\"' in skipped log, got: {logged_msgs}",
+        )
+        self.assertFalse(
+            any("subdirectories will not be traversed" in m for m in logged_msgs),
+            "Old format 'subdirectories will not be traversed' should not appear",
+        )
+
+    # ------------------------------------------------------------------
+    # filter_files_by_readme: filenames use relative path when rel_dir provided
+    # ------------------------------------------------------------------
+    def test_filter_files_skipped_log_uses_quotes(self):
+        """Skipped file log contains filename in double quotes at DEBUG level (no rel_dir — bare name)"""
+        logger = Mock()
+        files = ["orphan.docx"]
+        content = "doc2md#aikb\nsome other content"
+        docs2md.filter_files_by_readme(files, content, False, logger)
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('"orphan.docx"' in m for m in logged_msgs),
+            f"Expected '\"orphan.docx\"' in debug logs, got: {logged_msgs}",
+        )
+
+    def test_filter_files_skipfile_log_uses_quotes(self):
+        """Skipfile log contains filename in double quotes at DEBUG level (no rel_dir — bare name)"""
+        logger = Mock()
+        files = ["skip_me.docx"]
+        content = "doc2md#aikb\nskip_me.docx doc2md#skipfile"
+        docs2md.filter_files_by_readme(files, content, True, logger)
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('"skip_me.docx"' in m for m in logged_msgs),
+            f"Expected '\"skip_me.docx\"' in debug logs, got: {logged_msgs}",
+        )
+
+    def test_filter_files_skipped_log_uses_relative_path(self):
+        """Skipped file log uses rel_dir/filename at DEBUG level when rel_dir is provided"""
+        logger = Mock()
+        files = ["orphan.docx"]
+        content = "doc2md#aikb\nsome other content"
+        docs2md.filter_files_by_readme(
+            files, content, False, logger, rel_dir="subs/sub1"
+        )
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('"subs/sub1' in m and "orphan.docx" in m for m in logged_msgs),
+            f"Expected relative path in debug skip log, got: {logged_msgs}",
+        )
+
+    def test_filter_files_skipfile_log_uses_relative_path(self):
+        """Skipfile log uses rel_dir/filename at DEBUG level when rel_dir is provided"""
+        logger = Mock()
+        files = ["skip_me.docx"]
+        content = "doc2md#aikb\nskip_me.docx doc2md#skipfile"
+        docs2md.filter_files_by_readme(
+            files, content, True, logger, rel_dir="subs/sub1"
+        )
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('"subs/sub1' in m and "skip_me.docx" in m for m in logged_msgs),
+            f"Expected relative path in debug skipfile log, got: {logged_msgs}",
+        )
+
+    # ------------------------------------------------------------------
+    # convert_to_markdown: error log includes filename and command
+    # ------------------------------------------------------------------
+    @patch("subprocess.run")
+    @patch("os.makedirs")
+    def test_convert_to_markdown_error_log_includes_filename_and_command(
+        self, mock_makedirs, mock_run
+    ):
+        """On pandoc failure, error log includes quoted source filename and pandoc command"""
+        mock_result = Mock()
+        mock_result.returncode = 1
+        mock_result.stderr = "couldn't unpack docx container"
+        mock_run.return_value = mock_result
+        logger = Mock()
+        docs2md.convert_to_markdown(
+            "/some/path/empty.docx", "/some/path/empty.md", logger
+        )
+        error_calls = [call.args[0] for call in logger.error.call_args_list]
+        combined = "\n".join(error_calls)
+        self.assertIn('"empty.docx"', combined)
+        self.assertIn("Command:", combined)
+        self.assertIn("pandoc", combined)
+
+    # ------------------------------------------------------------------
+    # process_directory: per-file log uses relative path (subdir case)
+    # ------------------------------------------------------------------
+    def test_process_directory_file_log_uses_quotes(self):
+        """Per-file log uses bare filename when directory == root_folder"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\ntest.txt"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["test.txt"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+        ):
+            docs2md.process_directory(
+                "/root", config, logger, stats, important_logs=[], root_folder="/root"
+            )
+
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertTrue(
+            any('"test.txt"' in m for m in logged_msgs),
+            f"Expected '\"test.txt\"' in logs, got: {logged_msgs}",
+        )
+
+    def test_process_directory_file_log_uses_relative_path_for_subdir(self):
+        """Per-file log uses rel_dir/filename when directory is a subdirectory of root"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\nsub-text.txt"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["sub-text.txt"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+        ):
+            docs2md.process_directory(
+                "/root/subs/sub",
+                config,
+                logger,
+                stats,
+                important_logs=[],
+                root_folder="/root",
+            )
+
+        logged_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        # Should log relative path like "subs\sub\sub-text.txt" (or subs/sub/sub-text.txt)
+        self.assertTrue(
+            any("subs" in m and "sub-text.txt" in m for m in logged_msgs),
+            f"Expected relative path with 'subs' and 'sub-text.txt' in logs, got: {logged_msgs}",
+        )
+
+    # ------------------------------------------------------------------
+    # important_logs: no path suffix, quoted filenames
+    # ------------------------------------------------------------------
+    def test_important_logs_no_directory_suffix(self):
+        """important_logs entries contain quoted filename but no 'in <directory>' suffix"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\ntest.txt"
+        important_logs = []
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["test.txt"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+        ):
+            docs2md.process_directory(
+                "/root",
+                config,
+                logger,
+                stats,
+                important_logs=important_logs,
+                root_folder="/root",
+            )
+
+        self.assertEqual(len(important_logs), 1)
+        self.assertIn('"test.txt"', important_logs[0])
+        self.assertNotIn(" in /root", important_logs[0])
+        self.assertNotIn(" in C:\\", important_logs[0])
+
+    def test_important_logs_error_no_directory_suffix(self):
+        """important_logs error entries contain quoted filename but no 'in <directory>' suffix"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\nbad.docx"
+        important_logs = []
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["bad.docx"]),
+            patch(
+                "docs2md.process_file", return_value=(False, "Error: something failed")
+            ),
+        ):
+            docs2md.process_directory(
+                "/root",
+                config,
+                logger,
+                stats,
+                important_logs=important_logs,
+                root_folder="/root",
+            )
+
+        self.assertEqual(len(important_logs), 1)
+        self.assertIn("ERROR:", important_logs[0])
+        self.assertIn('"bad.docx"', important_logs[0])
+        self.assertNotIn(" in /root", important_logs[0])
+
+    # ------------------------------------------------------------------
+    # main(): Files path and Git path in start logs
+    # ------------------------------------------------------------------
+    def test_main_logs_files_path_with_quotes(self):
+        """main() logs 'Files path: \"<path>\"' instead of 'Root: <path>'"""
+        captured_logs = []
+
+        def fake_info(msg):
+            captured_logs.append(msg)
+
+        mock_logger = Mock()
+        mock_logger.info.side_effect = fake_info
+
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/test/root",
+                    "git_commit": False,
+                    "common": {},
+                },
+            ),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+        ):
+            docs2md.main()
+
+        self.assertTrue(
+            any("Files path:" in m and '"/test/root"' in m for m in captured_logs),
+            f"Expected 'Files path: \"/test/root\"' in logs, got: {captured_logs}",
+        )
+        self.assertFalse(
+            any(m.startswith("Root:") for m in captured_logs),
+            "Old 'Root:' prefix should not appear",
+        )
+
+    def test_main_logs_git_path_when_git_commit_enabled(self):
+        """main() logs 'Git path: \"<url>\"' when git_commit is True"""
+        captured_logs = []
+
+        def fake_info(msg):
+            captured_logs.append(msg)
+
+        mock_logger = Mock()
+        mock_logger.info.side_effect = fake_info
+
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/test/root",
+                    "git_commit": True,
+                    "git_url": "https://gitlab.example.com/proj/-/tree/main/docs",
+                    "common": {},
+                },
+            ),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+        ):
+            docs2md.main()
+
+        self.assertTrue(
+            any("Git path:" in m and "gitlab.example.com" in m for m in captured_logs),
+            f"Expected 'Git path: \"...\"' in logs, got: {captured_logs}",
+        )
+
+    def test_main_does_not_log_git_path_when_git_commit_disabled(self):
+        """main() does NOT log 'Git path:' when git_commit is False"""
+        captured_logs = []
+
+        def fake_info(msg):
+            captured_logs.append(msg)
+
+        mock_logger = Mock()
+        mock_logger.info.side_effect = fake_info
+
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/test/root",
+                    "git_commit": False,
+                    "common": {},
+                },
+            ),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+        ):
+            docs2md.main()
+
+        self.assertFalse(
+            any("Git path:" in m for m in captured_logs),
+            f"'Git path:' should not appear when git_commit is False, got: {captured_logs}",
+        )
+
+    # ------------------------------------------------------------------
+    # SUMMARY: blank line and header are separate log calls (no embedded \n)
+    # ------------------------------------------------------------------
+    def test_summary_blank_line_is_separate_log_call(self):
+        """SUMMARY blank line separator is a standalone logger.info('') call, not embedded \\n"""
+        captured_logs = []
+
+        def fake_info(msg):
+            captured_logs.append(msg)
+
+        mock_logger = Mock()
+        mock_logger.info.side_effect = fake_info
+
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/test/root",
+                    "git_commit": False,
+                    "common": {},
+                },
+            ),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+        ):
+            docs2md.main()
+
+        # "SUMMARY:" must appear as its own clean log entry (no leading \n)
+        self.assertIn(
+            "SUMMARY:",
+            captured_logs,
+            "'SUMMARY:' must be a standalone log entry without embedded newline",
+        )
+        # The blank separator must also be its own entry
+        summary_idx = captured_logs.index("SUMMARY:")
+        self.assertGreater(summary_idx, 0)
+        self.assertEqual(
+            captured_logs[summary_idx - 1],
+            "",
+            "The entry immediately before 'SUMMARY:' must be a blank '' log call",
+        )
+
+    def test_detailed_changes_blank_line_is_separate_log_call(self):
+        """'Change log:' blank line separator is standalone, no embedded \\n"""
+        captured_logs = []
+
+        def fake_info(msg):
+            captured_logs.append(msg)
+
+        mock_logger = Mock()
+        mock_logger.info.side_effect = fake_info
+
+        with (
+            patch(
+                "docs2md.load_config",
+                return_value={
+                    "root_folder": "/test/root",
+                    "git_commit": False,
+                    "common": {},
+                },
+            ),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch(
+                "docs2md.process_directories_recursively",
+                side_effect=lambda *a, **kw: a[4].append('"test.txt" MD generated'),
+            ),
+        ):
+            docs2md.main()
+
+        self.assertIn(
+            "Change log:",
+            captured_logs,
+            "'Change log:' must be a standalone log entry without embedded newline",
+        )
+        dc_idx = captured_logs.index("Change log:")
+        self.assertGreater(dc_idx, 0)
+        self.assertEqual(
+            captured_logs[dc_idx - 1],
+            "",
+            "The entry immediately before 'Change log:' must be a blank '' log call",
+        )
+
+    # ------------------------------------------------------------------
+    # filter_files_by_readme: skip logs must NOT appear at INFO level
+    # ------------------------------------------------------------------
+    def test_filter_files_skip_not_in_readme_is_debug_not_info(self):
+        """'Skipped due to not listed in README' must log at DEBUG, not INFO"""
+        logger = Mock()
+        files = ["orphan.docx"]
+        content = "doc2md#aikb\nsome other content"
+        docs2md.filter_files_by_readme(files, content, False, logger)
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        self.assertFalse(
+            any("orphan.docx" in m for m in info_msgs),
+            f"Skip message must not appear at INFO level, got: {info_msgs}",
+        )
+
+    def test_filter_files_skipfile_tag_is_debug_not_info(self):
+        """'Skipped due to skipfile tag' must log at DEBUG, not INFO"""
+        logger = Mock()
+        files = ["skip_me.docx"]
+        content = "doc2md#aikb\nskip_me.docx doc2md#skipfile"
+        docs2md.filter_files_by_readme(files, content, True, logger)
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        self.assertFalse(
+            any("skip_me.docx" in m for m in info_msgs),
+            f"Skipfile message must not appear at INFO level, got: {info_msgs}",
+        )
+
+    # ------------------------------------------------------------------
+    # Verbose/duplicate messages must be DEBUG, not INFO
+    # ------------------------------------------------------------------
+    def test_file_success_message_is_debug_not_info(self):
+        """Per-file success message must be logged at DEBUG, not INFO"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\ntest.txt"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["test.txt"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+        ):
+            docs2md.process_directory(
+                "/root", config, logger, stats, important_logs=[], root_folder="/root"
+            )
+
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        debug_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertFalse(
+            any("MD generated" in m for m in info_msgs),
+            f"Success message must not appear at INFO, got: {info_msgs}",
+        )
+        self.assertTrue(
+            any("MD generated" in m for m in debug_msgs),
+            f"Success message must appear at DEBUG, got: {debug_msgs}",
+        )
+
+    def test_file_error_message_is_info_not_debug(self):
+        """Per-file error message must be logged at INFO, not only DEBUG"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\nbad.docx"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=["bad.docx"]),
+            patch("docs2md.process_file", return_value=(False, "Error: pandoc failed")),
+        ):
+            docs2md.process_directory(
+                "/root", config, logger, stats, important_logs=[], root_folder="/root"
+            )
+
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        self.assertTrue(
+            any("Error:" in m for m in info_msgs),
+            f"Error message must appear at INFO, got: {info_msgs}",
+        )
+
+    def test_processing_dir_message_is_debug_not_info(self):
+        """'Processing: ...' message must be logged at DEBUG, not INFO"""
+        logger = Mock()
+        config = {"force_md_generation": False, "git_commit": False}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        readme_content = "doc2md#aikb\n"
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme_content),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+        ):
+            docs2md.process_directory(
+                "/root", config, logger, stats, root_folder="/root"
+            )
+
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        debug_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertFalse(
+            any("Processing" in m for m in info_msgs),
+            f"'Processing' must not appear at INFO, got: {info_msgs}",
+        )
+        self.assertTrue(
+            any("Processing" in m for m in debug_msgs),
+            f"'Processing' must appear at DEBUG, got: {debug_msgs}",
+        )
+
+    def test_skipped_dir_recursive_is_debug_not_info(self):
+        """Skipped directory messages in recursive walk must be DEBUG, not INFO"""
+        logger = Mock()
+        config = {}
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+        }
+        walk_entries = [("/root/noreadme", [], [])]
+
+        with (
+            patch("docs2md.os.walk", return_value=iter(walk_entries)),
+            patch("docs2md.os.path.exists", return_value=False),
+        ):
+            docs2md.process_directories_recursively("/root", config, logger, stats)
+
+        info_msgs = [call.args[0] for call in logger.info.call_args_list]
+        debug_msgs = [call.args[0] for call in logger.debug.call_args_list]
+        self.assertFalse(
+            any("Skipped" in m for m in info_msgs),
+            f"Skipped dir message must not appear at INFO, got: {info_msgs}",
+        )
+        self.assertTrue(
+            any("Skipped" in m for m in debug_msgs),
+            f"Skipped dir message must appear at DEBUG, got: {debug_msgs}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
