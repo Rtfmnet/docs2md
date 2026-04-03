@@ -149,15 +149,40 @@ def setup_logging(log_level="INFO"):
 
 
 def load_config():
-    """Load configuration from YAML file"""
+    """Load configuration from YAML file.
+
+    Supports two formats:
+    1. Legacy flat format: root_folder, git_url, etc. at top level.
+    2. Multi-project format: active_project key + named project sections.
+       The active project's keys are merged into the top-level config.
+    """
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return config
     except FileNotFoundError:
         raise Exception(f"ERROR - Config file '{CONFIG_FILE}' not found")
     except yaml.YAMLError as e:
         raise Exception(f"ERROR - Failed to parse config file: {e}")
+
+    # Multi-project format: resolve active_project
+    active_project = config.get("active_project")
+    if active_project:
+        project_config = config.get(active_project)
+        if not isinstance(project_config, dict):
+            raise Exception(
+                f"ERROR - active_project '{active_project}' not found in config"
+            )
+        # Collect known non-project keys: scalars and 'common'
+        # Project keys are any dict values that are not 'common'
+        non_project_keys = {
+            k: v for k, v in config.items() if k == "common" or not isinstance(v, dict)
+        }
+        # Merge: non-project base + active project keys
+        merged = {**non_project_keys, **project_config}
+        merged["active_project"] = active_project
+        return merged
+
+    return config
 
 
 def verify_pandoc():
@@ -804,6 +829,9 @@ def main():
             sys.exit(1)
 
         # Root folder log - kept as INFO per requirements
+        active_project = config.get("active_project")
+        if active_project:
+            logger.info(f"Active project: {active_project}")
         logger.info(f'Files path: "{root_folder}"')
         if config.get("git_commit", False):
             git_url = config.get("git_url", "")
