@@ -3,6 +3,7 @@ import os
 import re
 import requests
 import urllib.parse
+from datetime import datetime
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 
@@ -101,6 +102,33 @@ class GitManager:
         return self._push_commit_file_gitlab(
             file_path, git_path, commit_message, git_child_path
         )
+
+    def get_last_commit_time(self, file_path, git_path, git_child_path=None):
+        """
+        Returns the last commit timestamp for a file in the remote Git repository.
+
+        Args:
+            file_path (str): Path to local file (basename is used to locate the remote file).
+            git_path (str): URL to git repository tree.
+            git_child_path (str, optional): Additional child path to append to git_path subdir.
+
+        Returns:
+            tuple: (success, details) where success is bool and details is a dict.
+                On success: {"committed_epoch": <UTC float>, "file_path": ..., "project_path": ..., "branch": ...}
+                On failure: {"error": ...}
+        """
+        try:
+            provider = self._detect_provider(git_path)
+        except ValueError as e:
+            return False, {"error": str(e)}
+
+        if provider == self.PROVIDER_GITHUB:
+            return self._get_last_commit_time_github(
+                file_path, git_path, git_child_path
+            )
+        if provider == self.PROVIDER_AZURE:
+            return self._get_last_commit_time_azure(file_path, git_path, git_child_path)
+        return self._get_last_commit_time_gitlab(file_path, git_path, git_child_path)
 
     def verify_path(self, git_url):
         """
@@ -261,6 +289,47 @@ class GitManager:
         except Exception as e:
             return False, {"error": f"File commit failed: {str(e)}"}
 
+    def _get_last_commit_time_gitlab(self, file_path, git_path, git_child_path=None):
+        """Fetch the last commit timestamp for a file from GitLab."""
+        try:
+            parts = self._parse_gitlab_url(git_path)
+            hostname = parts["hostname"]
+            project_path = parts["project_path"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            if git_child_path:
+                subdir_path = self._normalize_child_path(subdir_path, git_child_path)
+
+            file_name = os.path.basename(file_path)
+            target_path = f"{subdir_path}/{file_name}" if subdir_path else file_name
+            target_path = target_path.replace("//", "/")
+
+            encoded_project_path = urllib.parse.quote(project_path, safe="")
+            headers = {"PRIVATE-TOKEN": self.token}
+            url = f"https://{hostname}/api/v4/projects/{encoded_project_path}/repository/commits"
+            params = {"ref_name": branch, "path": target_path, "per_page": 1}
+
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200 and response.json():
+                committed_date = response.json()[0]["committed_date"]
+                committed_epoch = datetime.fromisoformat(
+                    committed_date.replace("Z", "+00:00")
+                ).timestamp()
+                return True, {
+                    "committed_epoch": committed_epoch,
+                    "file_path": target_path,
+                    "project_path": project_path,
+                    "branch": branch,
+                }
+            else:
+                return False, {
+                    "error": f"API request failed: {response.status_code} - {response.text}"
+                }
+
+        except Exception as e:
+            return False, {"error": f"Last commit time retrieval failed: {str(e)}"}
+
     def _verify_path_gitlab(self, git_url):
         """Verify a GitLab repository path using the Repository Tree API."""
         try:
@@ -354,6 +423,46 @@ class GitManager:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+
+    def _get_last_commit_time_github(self, file_path, git_path, git_child_path=None):
+        """Fetch the last commit timestamp for a file from GitHub."""
+        try:
+            parts = self._parse_github_url(git_path)
+            owner = parts["owner"]
+            repo = parts["repo"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            if git_child_path:
+                subdir_path = self._normalize_child_path(subdir_path, git_child_path)
+
+            file_name = os.path.basename(file_path)
+            target_path = f"{subdir_path}/{file_name}" if subdir_path else file_name
+            target_path = target_path.replace("//", "/")
+
+            headers = self._github_headers()
+            url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+            params = {"sha": branch, "path": target_path, "per_page": 1}
+
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200 and response.json():
+                committed_date = response.json()[0]["commit"]["committer"]["date"]
+                committed_epoch = datetime.fromisoformat(
+                    committed_date.replace("Z", "+00:00")
+                ).timestamp()
+                return True, {
+                    "committed_epoch": committed_epoch,
+                    "file_path": target_path,
+                    "project_path": f"{owner}/{repo}",
+                    "branch": branch,
+                }
+            else:
+                return False, {
+                    "error": f"GitHub API request failed: {response.status_code} - {response.text}"
+                }
+
+        except Exception as e:
+            return False, {"error": f"Last commit time retrieval failed: {str(e)}"}
 
     def _push_commit_file_github(
         self, file_path, git_path, commit_message, git_child_path=None
@@ -557,6 +666,54 @@ class GitManager:
             "Authorization": f"Basic {credentials}",
             "Content-Type": "application/json",
         }
+
+    def _get_last_commit_time_azure(self, file_path, git_path, git_child_path=None):
+        """Fetch the last commit timestamp for a file from Azure DevOps."""
+        try:
+            parts = self._parse_azure_url(git_path)
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+            base_url = parts["base_url"]
+            api_version = "7.0"
+
+            if git_child_path:
+                subdir_path = self._normalize_child_path(subdir_path, git_child_path)
+
+            file_name = os.path.basename(file_path)
+            target_path = (
+                f"/{subdir_path}/{file_name}" if subdir_path else f"/{file_name}"
+            )
+            target_path = target_path.replace("//", "/")
+
+            headers = self._azure_headers()
+            url = (
+                f"{base_url}/commits"
+                f"?searchCriteria.itemPath={urllib.parse.quote(target_path)}"
+                f"&searchCriteria.itemVersion.version={urllib.parse.quote(branch)}"
+                f"&searchCriteria.itemVersion.versionType=branch"
+                f"&$top=1&api-version={api_version}"
+            )
+
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                commits = response.json().get("value", [])
+                if commits:
+                    committed_date = commits[0]["committer"]["date"]
+                    committed_epoch = datetime.fromisoformat(
+                        committed_date.replace("Z", "+00:00")
+                    ).timestamp()
+                    return True, {
+                        "committed_epoch": committed_epoch,
+                        "file_path": target_path,
+                        "project_path": f"{parts['org']}/{parts['project']}/{parts['repo']}",
+                        "branch": branch,
+                    }
+            return False, {
+                "error": f"Azure DevOps API request failed: {response.status_code} - {response.text}"
+            }
+
+        except Exception as e:
+            return False, {"error": f"Last commit time retrieval failed: {str(e)}"}
 
     def _push_commit_file_azure(
         self, file_path, git_path, commit_message, git_child_path=None

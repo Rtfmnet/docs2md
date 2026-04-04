@@ -870,5 +870,117 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
         self.assertIn("Path not found", details["error"])
 
 
+class TestGetLastCommitTime(unittest.TestCase):
+    """Test get_last_commit_time for all three providers"""
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_gitlab_success(self, mock_get, mock_init):
+        """GitLab: +00:00 offset is correctly converted to UTC epoch float"""
+        mock_init.return_value = None
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {"committed_date": "2026-04-04T22:42:00.000+00:00", "id": "abc123"}
+        ]
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+        success, details = gm.get_last_commit_time(
+            "test.md", "https://gitbud.epam.com/project/repo/-/tree/main/subdir"
+        )
+
+        self.assertTrue(success)
+        self.assertIsInstance(details["committed_epoch"], float)
+        self.assertAlmostEqual(details["committed_epoch"], 1775342520.0, delta=1)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_github_success(self, mock_get, mock_init):
+        """GitHub: Z suffix is correctly converted to UTC epoch float"""
+        mock_init.return_value = None
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {"commit": {"committer": {"date": "2026-04-04T22:42:00Z"}}}
+        ]
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+        success, details = gm.get_last_commit_time(
+            "test.md", "https://github.com/owner/repo/tree/main/subdir"
+        )
+
+        self.assertTrue(success)
+        self.assertIsInstance(details["committed_epoch"], float)
+        self.assertAlmostEqual(details["committed_epoch"], 1775342520.0, delta=1)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_azure_success(self, mock_get, mock_init):
+        """Azure: Z suffix is correctly converted to UTC epoch float"""
+        mock_init.return_value = None
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "value": [
+                {"committer": {"date": "2026-04-04T22:42:00Z"}, "commitId": "aaa"}
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+        success, details = gm.get_last_commit_time(
+            "test.md",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo?path=/docs&version=GBmain",
+        )
+
+        self.assertTrue(success)
+        self.assertIsInstance(details["committed_epoch"], float)
+        self.assertAlmostEqual(details["committed_epoch"], 1775342520.0, delta=1)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_api_error(self, mock_get, mock_init):
+        """Non-200 response returns failure"""
+        mock_init.return_value = None
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_response.json.return_value = []
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+        success, details = gm.get_last_commit_time(
+            "test.md", "https://gitbud.epam.com/project/repo/-/tree/main/subdir"
+        )
+
+        self.assertFalse(success)
+        self.assertIn("error", details)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_file_not_in_git(self, mock_get, mock_init):
+        """200 with empty result (file not yet committed) returns failure"""
+        mock_init.return_value = None
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = []
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+        success, details = gm.get_last_commit_time(
+            "test.md", "https://gitbud.epam.com/project/repo/-/tree/main/subdir"
+        )
+
+        self.assertFalse(success)
+        self.assertIn("error", details)
+
+
 if __name__ == "__main__":
     unittest.main()
