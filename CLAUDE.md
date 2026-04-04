@@ -42,7 +42,7 @@ The `samples/` directory contains standalone utility scripts (bulk converter, md
 The main pipeline (`docs2md.py`) processes each directory under `root_folder`:
 
 1. **Directory evaluation** — skip if no `README.md`; skip if README contains `doc2md#skipdir`
-2. **File collection** — gather all files with supported extensions; if `doc2md#mask='<regex>'` tags exist in README, keep only files matching at least one mask
+2. **File collection** — gather all files with supported extensions; if `doc2md#mask=<glob>` tags exist in README, keep only files matching at least one mask
 3. **File filtering** — keep files referenced in README (word-boundary, case-insensitive match on filename with or without extension); remove files whose reference line contains `doc2md#skipfile`; if no masks defined and file not referenced — remove it
 4. **File processing** — convert via pandoc; skip if `.md` already exists and source is not newer (unless `force_md_generation: true`); place output in `md/` subdirectory if it exists; append source extension to filename if name collision (e.g., `report_docx.md`)
 
@@ -53,7 +53,7 @@ The main pipeline (`docs2md.py`) processes each directory under `root_folder`:
 | `doc2md#aikb` | Required to opt-in a directory for processing |
 | `doc2md#skipdir` | Skip this directory and all subdirectories |
 | `doc2md#skipfile` | On a file's reference line — skip that file |
-| `doc2md#mask='<regex>'` | Only process files matching this regex pattern |
+| `doc2md#mask=<glob>` | Only process files matching this wildcard pattern (e.g. `*Transcript.docx`) |
 
 ## Configuration (`docs2md.yaml`)
 

@@ -6,6 +6,7 @@ Converts various document formats to .md files using pandoc
 import os
 import re
 import sys
+import fnmatch
 import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
@@ -233,18 +234,30 @@ def check_aikb_tag(readme_content):
     return False
 
 
+def glob_to_regex(pattern):
+    """Convert a glob/wildcard pattern to a regex pattern.
+
+    Supports * (any chars) and ? (single char) wildcards.
+    Example: '*Transcript.docx' -> regex matching any filename ending with 'Transcript.docx'
+    """
+    return fnmatch.translate(pattern)
+
+
 def extract_masks(readme_content):
-    """Extract file masks from README content"""
+    """Extract file masks from README content and convert glob patterns to regex"""
     masks = []
     if not readme_content:
         return masks
 
     for line in readme_content.split("\n"):
         if TAG_MASK_PREFIX in line:
-            # Extract regex mask pattern from doc2md#mask='pattern' format
-            match = re.search(rf"{re.escape(TAG_MASK_PREFIX)}['\"]([^'\"]+)['\"]", line)
+            # Extract glob mask pattern from doc2md#mask='pattern' format
+            match = re.search(
+                rf"{re.escape(TAG_MASK_PREFIX)}['\"]?([^'\" \t]+)['\"]?", line
+            )
             if match:
-                masks.append(match.group(1))
+                glob_pattern = match.group(1)
+                masks.append(glob_to_regex(glob_pattern))
     return masks
 
 

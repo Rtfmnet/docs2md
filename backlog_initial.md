@@ -34,8 +34,9 @@ It is required to convert such documents into text files to provide text files t
 2. FILE COLLECTION (current directory only) all supported files, optinally by masks
    - Collect all files in current directory with supported extensions (see them above)
    - Apply filtering based on masks:
-     - If masks are defined in README.md using "doc2md#mask='^regex_pattern$'" format (search text in file)
-        - Mask tag example: `doc2md#mask='^.*Transcript\.docx$'`
+     - If masks are defined in README.md using "doc2md#mask=<glob_pattern>" format (search text in file)
+         - Mask tag example: `doc2md#mask=*Transcript.docx`
+         - Supports wildcards: `*` (any characters), `?` (single character). Quotes are optional.
        - Keep only files matching at least one mask (regex pattern)
      - If no masks are defined in README.md, keep all files with supported extensions
    - Result: Initial file list for this directory

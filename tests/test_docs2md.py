@@ -209,11 +209,38 @@ class TestReadmeParsing(unittest.TestCase):
         self.assertFalse(docs2md.check_aikb_tag("no tag"))
         self.assertFalse(docs2md.check_aikb_tag(None))
 
+    def test_glob_to_regex(self):
+        """glob_to_regex converts wildcard patterns to regex equivalents"""
+        import re, fnmatch
+
+        # * matches any chars including none
+        pattern = docs2md.glob_to_regex("*.docx")
+        self.assertTrue(re.match(pattern, "report.docx", re.IGNORECASE))
+        self.assertTrue(re.match(pattern, "Transcript - meeting.docx", re.IGNORECASE))
+        self.assertFalse(re.match(pattern, "report.xlsx", re.IGNORECASE))
+        # ? matches exactly one char
+        pattern2 = docs2md.glob_to_regex("file?.docx")
+        self.assertTrue(re.match(pattern2, "fileA.docx", re.IGNORECASE))
+        self.assertFalse(re.match(pattern2, "file.docx", re.IGNORECASE))
+
     def test_extract_masks(self):
-        content = "doc2md#mask='^.*\\.docx$'\ndoc2md#mask='^test.*$'"
+        """extract_masks converts glob patterns to regex"""
+        import fnmatch
+
+        content = "doc2md#mask='*.docx'\ndoc2md#mask='test*'"
         masks = docs2md.extract_masks(content)
         self.assertEqual(len(masks), 2)
-        self.assertIn("^.*\\.docx$", masks)
+        self.assertIn(fnmatch.translate("*.docx"), masks)
+        self.assertIn(fnmatch.translate("test*"), masks)
+
+    def test_extract_masks_no_quotes(self):
+        """extract_masks works without quotes around the pattern"""
+        import fnmatch
+
+        content = "doc2md#mask=*Transcript.docx - some comment"
+        masks = docs2md.extract_masks(content)
+        self.assertEqual(len(masks), 1)
+        self.assertIn(fnmatch.translate("*Transcript.docx"), masks)
 
     def test_extract_masks_empty(self):
         self.assertEqual(docs2md.extract_masks("no masks"), [])
@@ -295,8 +322,11 @@ class TestFileSelection(unittest.TestCase):
         self.assertEqual(docs2md.collect_files_in_directory("/test"), [])
 
     def test_apply_masks_filters(self):
+        import fnmatch
+
         files = ["test.docx", "report.docx"]
-        self.assertEqual(docs2md.apply_masks(files, ["^test.*$"]), ["test.docx"])
+        masks = [fnmatch.translate("test*.docx")]
+        self.assertEqual(docs2md.apply_masks(files, masks), ["test.docx"])
 
     def test_apply_masks_no_masks_returns_all(self):
         files = ["a.docx", "b.docx"]
