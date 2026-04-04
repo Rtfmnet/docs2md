@@ -170,8 +170,13 @@ def load_config():
     if active_project:
         project_config = config.get(active_project)
         if not isinstance(project_config, dict):
+            available = [
+                k for k, v in config.items() if isinstance(v, dict) and k != "common"
+            ]
+            available_str = ", ".join(available) if available else "(none)"
             raise Exception(
-                f"ERROR - active_project '{active_project}' not found in config"
+                f"ERROR - active_project '{active_project}' not found in config. "
+                f"Available projects: {available_str}"
             )
         # Collect known non-project keys: scalars and 'common'
         # Project keys are any dict values that are not 'common'
@@ -803,6 +808,7 @@ def process_directories_recursively(
 def main():
     """Main function"""
     # Load config early to get log level
+    config = None
     try:
         config = load_config()
         log_level = config.get("common", {}).get("log_level", LOG_DEFAULT_LEVEL)
@@ -812,6 +818,9 @@ def main():
 
     # Initialize logging with config-specified level
     logger = setup_logging(log_level)
+
+    if config is None:
+        sys.exit(1)
 
     # List to store important log messages for summary
     important_logs = []

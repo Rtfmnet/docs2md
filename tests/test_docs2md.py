@@ -171,6 +171,22 @@ class TestLoadConfigActiveProject(unittest.TestCase):
             self._load_with_yaml(raw)
         self.assertIn("nonexistent", str(ctx.exception))
 
+    def test_invalid_active_project_lists_available_projects(self):
+        """Error message for wrong active_project should list available project names"""
+        raw = {
+            "active_project": "psaasa",
+            "proj1": {"root_folder": "/p1"},
+            "proj2": {"root_folder": "/p2"},
+            "common": {"log_level": "INFO"},
+        }
+        with self.assertRaises(Exception) as ctx:
+            self._load_with_yaml(raw)
+        msg = str(ctx.exception)
+        self.assertIn("psaasa", msg)
+        self.assertIn("proj1", msg)
+        self.assertIn("proj2", msg)
+        self.assertIn("Available projects", msg)
+
     def test_no_active_project_returns_legacy_flat_config(self):
         raw = {"root_folder": "/flat", "git_commit": False}
         config = self._load_with_yaml(raw)

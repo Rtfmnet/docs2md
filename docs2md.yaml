@@ -1,4 +1,4 @@
-active_project: fa  # <-- only this line changes
+active_project: psaas  # <-- only this line changes
 
 tests:
   root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests'
