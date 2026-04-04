@@ -241,7 +241,7 @@ def extract_masks(readme_content):
 
     for line in readme_content.split("\n"):
         if TAG_MASK_PREFIX in line:
-            # Extract regex pattern from doc2md#mask='pattern' format
+            # Extract regex mask pattern from doc2md#mask='pattern' format
             match = re.search(rf"{re.escape(TAG_MASK_PREFIX)}['\"]([^'\"]+)['\"]", line)
             if match:
                 masks.append(match.group(1))
@@ -282,7 +282,7 @@ def apply_masks(files, masks):
     for file in files:
         for mask in masks:
             try:
-                if re.match(mask, file):
+                if re.search(mask, file, re.IGNORECASE):
                     filtered.append(file)
                     break
             except re.error:

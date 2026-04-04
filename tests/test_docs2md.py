@@ -303,11 +303,9 @@ class TestFileSelection(unittest.TestCase):
         self.assertEqual(docs2md.apply_masks(files, []), files)
 
     def test_apply_masks_invalid_regex_skipped(self):
-        # bad regex should not crash; file simply not matched
         result = docs2md.apply_masks(["test.docx"], ["[invalid"])
         self.assertEqual(result, [])
 
-    @patch("os.path.exists", return_value=False)
     @patch("os.listdir", return_value=[])
     def test_get_target_md_path_simple(self, *_):
         result = docs2md.get_target_md_path("test.docx", "/dir")
@@ -544,7 +542,7 @@ class TestProcessDirectory(unittest.TestCase):
         self.assertTrue(any("Error:" in m for m in info_msgs))
 
     def test_masks_applied(self):
-        readme = f"{docs2md.TAG_AIKB}\ndoc2md#mask='^keep.*$'\nkeep.docx\ndrop.docx"
+        readme = f"{docs2md.TAG_AIKB}\ndoc2md#mask='keep*'\nkeep.docx\ndrop.docx"
         with (
             patch("os.path.exists", return_value=True),
             patch("docs2md.read_readme", return_value=readme),
