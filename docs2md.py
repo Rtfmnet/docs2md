@@ -988,7 +988,7 @@ def main():
         logger.info(f"Files generated: {stats['files_generated']}")
         logger.info(f"Files commited to git: {stats['files_committed']}")
         logger.info(f"Files skipped as actual: {stats['files_skipped']}")
-        logger.info(f"Files skipped as identical to remote ones in git: {stats['files_git_identical']}")
+        logger.info(f"Files skipped as identical to git: {stats['files_git_identical']}")
         logger.info(f"Files with errors: {stats['files_errors']}")
 
         # Show important logs in summary

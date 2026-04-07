@@ -1090,9 +1090,9 @@ class TestMain(unittest.TestCase):
         self.assertIn("SUMMARY:", captured)
 
     def test_summary_git_identical_line_present(self):
-        """Summary must include the 'Files skipped as identical to remote ones in git' line."""
+        """Summary must include the 'Files skipped as identical to git' line."""
         captured, _, _ = self._run_main()
-        self.assertTrue(any("identical to remote" in line for line in captured))
+        self.assertTrue(any("identical to git" in line for line in captured))
 
     def test_summary_blank_line_before_header(self):
         captured, _, _ = self._run_main()
