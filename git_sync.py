@@ -234,11 +234,26 @@ class GitManager:
                 "commit_message": commit_message,
             }
 
+            # GET existing file to check existence and compare content
+            file_exists = False
             try:
-                file_check_response = requests.head(
+                file_get_response = requests.get(
                     files_api_url, headers=headers, params={"ref": branch}
                 )
-                file_exists = file_check_response.status_code == 200
+                if file_get_response.status_code == 200:
+                    file_exists = True
+                    remote_data = file_get_response.json()
+                    remote_content = base64.b64decode(
+                        remote_data.get("content", "")
+                    ).decode("utf-8")
+                    if remote_content == file_content:
+                        return True, {
+                            "message": "File already up to date",
+                            "no_change": True,
+                            "file_path": target_path,
+                            "project_path": project_path,
+                            "branch": branch,
+                        }
             except Exception:
                 file_exists = False
 
@@ -261,11 +276,12 @@ class GitManager:
                     "branch": branch,
                 }
             else:
-                # Race condition: file appeared between HEAD and POST → retry as PUT
+                response_text_lower = response.text.lower()
+                # Race condition: file appeared between GET and POST → retry as PUT
                 if (
                     not file_exists
                     and response.status_code == 400
-                    and "file with this name already exists" in response.text.lower()
+                    and "file with this name already exists" in response_text_lower
                 ):
                     retry_response = requests.put(
                         files_api_url, headers=headers, json=file_payload
@@ -277,14 +293,12 @@ class GitManager:
                             "project_path": project_path,
                             "branch": branch,
                         }
-                    else:
-                        return False, {
-                            "error": f"File update retry failed: {retry_response.status_code} - {retry_response.text}"
-                        }
-                else:
                     return False, {
-                        "error": f"API request failed: {response.status_code} - {response.text}"
+                        "error": f"File update retry failed: {retry_response.status_code} - {retry_response.text}"
                     }
+                return False, {
+                    "error": f"API request failed: {response.status_code} - {response.text}"
+                }
 
         except Exception as e:
             return False, {"error": f"File commit failed: {str(e)}"}
@@ -494,13 +508,26 @@ class GitManager:
             api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{urllib.parse.quote(target_path, safe='/')}"
 
             # Check if the file already exists to get its SHA (required for updates)
+            # Also compare content to avoid a pointless commit
             sha = None
             try:
                 check_response = requests.get(
                     api_url, headers=headers, params={"ref": branch}
                 )
                 if check_response.status_code == 200:
-                    sha = check_response.json().get("sha")
+                    remote_data = check_response.json()
+                    sha = remote_data.get("sha")
+                    # GitHub returns content as base64 with newlines — strip them
+                    remote_b64 = remote_data.get("content", "").replace("\n", "")
+                    remote_content = base64.b64decode(remote_b64).decode("utf-8")
+                    if remote_content == file_content:
+                        return True, {
+                            "message": "File already up to date",
+                            "no_change": True,
+                            "file_path": target_path,
+                            "project_path": f"{owner}/{repo}",
+                            "branch": branch,
+                        }
             except Exception:
                 pass
 
@@ -527,10 +554,9 @@ class GitManager:
                     "project_path": f"{owner}/{repo}",
                     "branch": branch,
                 }
-            else:
-                return False, {
-                    "error": f"GitHub API request failed: {response.status_code} - {response.text}"
-                }
+            return False, {
+                "error": f"GitHub API request failed: {response.status_code} - {response.text}"
+            }
 
         except Exception as e:
             return False, {"error": f"File commit failed: {str(e)}"}
@@ -744,16 +770,31 @@ class GitManager:
             headers = self._azure_headers()
             api_version = "7.0"
 
-            # Check if the file already exists
+            # Check if the file already exists and compare content to avoid empty commits
+            file_exists = False
             items_url = (
                 f"{base_url}/items"
                 f"?path={urllib.parse.quote(target_path)}"
                 f"&versionDescriptor.versionType=branch"
                 f"&versionDescriptor.version={urllib.parse.quote(branch)}"
+                f"&includeContent=true"
                 f"&api-version={api_version}"
             )
             check_response = requests.get(items_url, headers=headers)
-            file_exists = check_response.status_code == 200
+            if check_response.status_code == 200:
+                file_exists = True
+                try:
+                    remote_content = check_response.json().get("content", "")
+                    if remote_content == file_content:
+                        return True, {
+                            "message": "File already up to date",
+                            "no_change": True,
+                            "file_path": target_path,
+                            "project_path": f"{parts['org']}/{parts['project']}/{parts['repo']}",
+                            "branch": branch,
+                        }
+                except Exception:
+                    pass
 
             # Get the latest commit SHA on the branch (required for push)
             refs_url = f"{base_url}/refs?filter=heads/{urllib.parse.quote(branch)}&api-version={api_version}"
@@ -803,10 +844,9 @@ class GitManager:
                     "project_path": f"{parts['org']}/{parts['project']}/{parts['repo']}",
                     "branch": branch,
                 }
-            else:
-                return False, {
-                    "error": f"Azure DevOps API request failed: {response.status_code} - {response.text}"
-                }
+            return False, {
+                "error": f"Azure DevOps API request failed: {response.status_code} - {response.text}"
+            }
 
         except Exception as e:
             return False, {"error": f"File commit failed: {str(e)}"}

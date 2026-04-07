@@ -31,15 +31,15 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
-    def test_commit_push_file_new_file(self, mock_head, mock_post, mock_put, mock_init):
+    @patch("requests.get")
+    def test_commit_push_file_new_file(self, mock_get, mock_post, mock_put, mock_init):
         """Test committing a new file"""
         mock_init.return_value = None
 
         # Set up mock response for file check (file doesn't exist)
-        mock_head_response = Mock()
-        mock_head_response.status_code = 404  # File not found
-        mock_head.return_value = mock_head_response
+        mock_get_response = Mock()
+        mock_get_response.status_code = 404  # File not found
+        mock_get.return_value = mock_get_response
 
         # Set up mock response for create file
         mock_post_response = Mock()
@@ -63,8 +63,8 @@ class TestGitManager(unittest.TestCase):
                 git_child_path=None,
             )
 
-        # Verify head request was made to check if file exists
-        self.assertTrue(mock_head.called)
+        # Verify GET request was made to check if file exists
+        self.assertTrue(mock_get.called)
 
         # Verify POST request was made to create the file (not PUT)
         self.assertTrue(mock_post.called)
@@ -83,17 +83,21 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
+    @patch("requests.get")
     def test_commit_push_file_update_file(
-        self, mock_head, mock_post, mock_put, mock_init
+        self, mock_get, mock_post, mock_put, mock_init
     ):
         """Test updating an existing file"""
         mock_init.return_value = None
+        import base64
 
-        # Set up mock responses for file check (file exists)
-        mock_head_response = Mock()
-        mock_head_response.status_code = 200  # File exists
-        mock_head.return_value = mock_head_response
+        # Set up mock responses for file check (file exists with different content)
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200  # File exists
+        mock_get_response.json.return_value = {
+            "content": base64.b64encode(b"Old content").decode("utf-8")
+        }
+        mock_get.return_value = mock_get_response
 
         # Set up mock response for update file
         mock_put_response = Mock()
@@ -106,7 +110,7 @@ class TestGitManager(unittest.TestCase):
         git_manager = GitManager()
         git_manager.token = "test_token"
 
-        # Mock open to read file content
+        # Mock open to read file content (different from remote)
         file_content = "Test content"
         m = unittest.mock.mock_open(read_data=file_content)
         with patch("builtins.open", m):
@@ -117,8 +121,8 @@ class TestGitManager(unittest.TestCase):
                 git_child_path=None,
             )
 
-        # Verify head request was made to check if file exists
-        self.assertTrue(mock_head.called)
+        # Verify GET request was made to check if file exists
+        self.assertTrue(mock_get.called)
 
         # Verify PUT request was made to update the file (not POST)
         self.assertTrue(mock_put.called)
@@ -137,17 +141,17 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
+    @patch("requests.get")
     def test_commit_push_file_with_child_path(
-        self, mock_head, mock_post, mock_put, mock_init
+        self, mock_get, mock_post, mock_put, mock_init
     ):
         """Test committing a file with git_child_path"""
         mock_init.return_value = None
 
         # Set up mock response for file check (file doesn't exist)
-        mock_head_response = Mock()
-        mock_head_response.status_code = 404  # File not found
-        mock_head.return_value = mock_head_response
+        mock_get_response = Mock()
+        mock_get_response.status_code = 404  # File not found
+        mock_get.return_value = mock_get_response
 
         # Set up mock response for create file
         mock_post_response = Mock()
@@ -190,17 +194,15 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
-    def test_commit_push_file_api_error(
-        self, mock_head, mock_post, mock_put, mock_init
-    ):
+    @patch("requests.get")
+    def test_commit_push_file_api_error(self, mock_get, mock_post, mock_put, mock_init):
         """Test handling API error when committing"""
         mock_init.return_value = None
 
         # Set up mock response for file check (file doesn't exist)
-        mock_head_response = Mock()
-        mock_head_response.status_code = 404  # File not found
-        mock_head.return_value = mock_head_response
+        mock_get_response = Mock()
+        mock_get_response.status_code = 404  # File not found
+        mock_get.return_value = mock_get_response
 
         # Set up mock response for create file error
         mock_post_response = Mock()
@@ -229,17 +231,17 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
+    @patch("requests.get")
     def test_commit_push_file_file_exists_retry(
-        self, mock_head, mock_post, mock_put, mock_init
+        self, mock_get, mock_post, mock_put, mock_init
     ):
         """Test handling the 'file already exists' error by retrying as update"""
         mock_init.return_value = None
 
         # Set up mock response for file check (file doesn't exist)
-        mock_head_response = Mock()
-        mock_head_response.status_code = 404  # File not found
-        mock_head.return_value = mock_head_response
+        mock_get_response = Mock()
+        mock_get_response.status_code = 404  # File not found
+        mock_get.return_value = mock_get_response
 
         # Set up mock response for POST (file already exists error)
         mock_post_response = Mock()
@@ -280,18 +282,18 @@ class TestGitManager(unittest.TestCase):
     @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.post")
-    @patch("requests.head")
+    @patch("requests.get")
     def test_push_commit_file_root_url_dot_child_path(
-        self, mock_head, mock_post, mock_put, mock_init
+        self, mock_get, mock_post, mock_put, mock_init
     ):
         """Test that git_child_path='.' with a root URL (no subdir) produces a clean
         target path 'filename.md' instead of the broken './filename.md'."""
         mock_init.return_value = None
 
-        # File does not exist yet → HEAD returns 404
-        mock_head_response = Mock()
-        mock_head_response.status_code = 404
-        mock_head.return_value = mock_head_response
+        # File does not exist yet → GET returns 404
+        mock_get_response = Mock()
+        mock_get_response.status_code = 404
+        mock_get.return_value = mock_get_response
 
         # POST succeeds
         mock_post_response = Mock()
@@ -325,6 +327,48 @@ class TestGitManager(unittest.TestCase):
         api_url = args[0]
         self.assertNotIn(".%2F", api_url)  # URL-encoded './'
         self.assertNotIn("./", api_url)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.put")
+    @patch("requests.post")
+    @patch("requests.get")
+    def test_commit_push_file_gitlab_no_change(
+        self, mock_get, mock_post, mock_put, mock_init
+    ):
+        """GitLab: returns no_change=True when remote content is identical to local"""
+        import base64
+
+        mock_init.return_value = None
+
+        file_content = "Identical content"
+
+        # GET returns the same content that is already on remote
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.json.return_value = {
+            "content": base64.b64encode(file_content.encode("utf-8")).decode("utf-8")
+        }
+        mock_get.return_value = mock_get_response
+
+        git_manager = GitManager()
+        git_manager.token = "test_token"
+
+        m = unittest.mock.mock_open(read_data=file_content)
+        with patch("builtins.open", m):
+            success, details = git_manager.push_commit_file(
+                "test_file.md",
+                "https://gitbud.epam.com/project/repo/-/tree/main/path",
+                "Test commit",
+            )
+
+        # Should succeed but report no change
+        self.assertTrue(success)
+        self.assertTrue(details.get("no_change"))
+        self.assertEqual(details["message"], "File already up to date")
+
+        # No actual write calls should have been made
+        self.assertFalse(mock_put.called)
+        self.assertFalse(mock_post.called)
 
     @patch.object(GitManager, "__init__")
     @patch("requests.get")
@@ -515,11 +559,16 @@ class TestGitManagerGitHub(unittest.TestCase):
     def test_push_commit_file_github_update_file(self, mock_get, mock_put, mock_init):
         """Test updating an existing file on GitHub (includes SHA)"""
         mock_init.return_value = None
+        import base64
 
-        # GET check: file exists with SHA
+        # GET check: file exists with SHA and different content
         mock_get_response = Mock()
         mock_get_response.status_code = 200
-        mock_get_response.json.return_value = {"sha": "abc123", "type": "file"}
+        mock_get_response.json.return_value = {
+            "sha": "abc123",
+            "type": "file",
+            "content": base64.b64encode(b"Old content").decode("utf-8"),
+        }
         mock_get.return_value = mock_get_response
 
         # PUT response: success
@@ -683,6 +732,43 @@ class TestGitManagerGitHub(unittest.TestCase):
         self.assertIn("child", details["file_path"])
         self.assertIn("dir", details["file_path"])
 
+    @patch.object(GitManager, "__init__")
+    @patch("requests.put")
+    @patch("requests.get")
+    def test_push_commit_file_github_no_change(self, mock_get, mock_put, mock_init):
+        """GitHub: returns no_change=True when remote content is identical to local"""
+        import base64
+
+        mock_init.return_value = None
+
+        file_content = "Identical content"
+
+        # GET returns the same content already on remote
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.json.return_value = {
+            "sha": "abc123",
+            "type": "file",
+            "content": base64.b64encode(file_content.encode("utf-8")).decode("utf-8"),
+        }
+        mock_get.return_value = mock_get_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        m = unittest.mock.mock_open(read_data=file_content)
+        with patch("builtins.open", m):
+            success, details = gm.push_commit_file(
+                "TestFile.md",
+                "https://github.com/owner/repo/tree/main/doc2md",
+                "doc2md#sync",
+            )
+
+        self.assertTrue(success)
+        self.assertTrue(details.get("no_change"))
+        self.assertEqual(details["message"], "File already up to date")
+        self.assertFalse(mock_put.called)
+
 
 class TestGitManagerAzureDevOps(unittest.TestCase):
     """Test Azure DevOps-specific methods"""
@@ -777,10 +863,13 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
         """Test updating an existing file on Azure DevOps"""
         mock_init.return_value = None
 
-        # items check: file exists
+        # items check: file exists with different content
         mock_items_response = Mock()
         mock_items_response.status_code = 200
-        mock_items_response.json.return_value = {"objectId": "existingsha"}
+        mock_items_response.json.return_value = {
+            "objectId": "existingsha",
+            "content": "Old content",
+        }
 
         # refs response
         mock_refs_response = Mock()
@@ -868,6 +957,40 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIn("Path not found", details["error"])
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.post")
+    @patch("requests.get")
+    def test_push_commit_file_azure_no_change(self, mock_get, mock_post, mock_init):
+        """Azure DevOps: returns no_change=True when remote content is identical to local"""
+        mock_init.return_value = None
+
+        file_content = "Identical content"
+
+        # items check: file exists with identical content
+        mock_items_response = Mock()
+        mock_items_response.status_code = 200
+        mock_items_response.json.return_value = {
+            "objectId": "existingsha",
+            "content": file_content,
+        }
+        mock_get.return_value = mock_items_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        m = unittest.mock.mock_open(read_data=file_content)
+        with patch("builtins.open", m):
+            success, details = gm.push_commit_file(
+                "TestFile.md",
+                "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain",
+                "doc2md#sync",
+            )
+
+        self.assertTrue(success)
+        self.assertTrue(details.get("no_change"))
+        self.assertEqual(details["message"], "File already up to date")
+        self.assertFalse(mock_post.called)
 
 
 class TestGetLastCommitTime(unittest.TestCase):

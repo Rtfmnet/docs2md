@@ -432,9 +432,106 @@ def is_source_newer(source_path, target_path):
         return True
 
 
+def _ensure_git_manager(config, logger):
+    """
+    Initialize and verify GitManager if not already done.
+
+    Args:
+        config (dict): Configuration dictionary
+        logger (logging.Logger): Logger instance
+
+    Returns:
+        GitManager: initialized instance, or raises GitFatalError on failure
+    """
+    global _git_manager, _git_manager_error
+
+    if _git_manager_error:
+        logger.debug("GitManager previously failed to initialize, skipping sync")
+        return None
+
+    if _git_manager is None:
+        git_url = config.get("git_url")
+        if not git_url:
+            logger.error("Git URL not specified in config")
+            _git_manager_error = True
+            raise GitFatalError("Git URL not specified in config")
+
+        logger.debug("Initializing GitManager")
+        try:
+            _git_manager = GitManager()
+        except Exception as e:
+            logger.error(f"Failed to initialize GitManager: {str(e)}")
+            _git_manager_error = True
+            raise GitFatalError(f"Failed to initialize GitManager: {str(e)}") from e
+
+        logger.debug(f"Verifying git path: {git_url}")
+        success, details = _git_manager.verify_path(git_url)
+
+        if not success:
+            error_msg = details.get("error", "Unknown error")
+            logger.error(f"Git path verification failed: {error_msg}")
+            _git_manager_error = True
+            raise GitFatalError(f"Git path verification failed: {error_msg}")
+
+        logger.debug("Git path verified successfully")
+
+    return _git_manager
+
+
+def _calc_child_path(file_path, config, logger):
+    """
+    Calculate the git child path for a file relative to root_folder.
+
+    Args:
+        file_path (str): Path to the file
+        config (dict): Configuration dictionary
+        logger (logging.Logger): Logger instance
+
+    Returns:
+        str or None: child path string (may be empty string for root), or None on error
+    """
+    root_folder = config.get("root_folder")
+    if not root_folder:
+        logger.error("root_folder not specified in config")
+        return None
+
+    if not os.path.isabs(root_folder):
+        root_folder = os.path.abspath(root_folder)
+
+    if not os.path.isabs(file_path):
+        file_path = os.path.abspath(file_path)
+
+    try:
+        norm_root = os.path.normpath(root_folder)
+        norm_file = os.path.normpath(file_path)
+
+        if not norm_file.startswith(norm_root):
+            logger.error(f"File path {norm_file} is not under root folder {norm_root}")
+            return None
+
+        child_path = os.path.relpath(os.path.dirname(norm_file), norm_root)
+
+        if child_path == ".":
+            child_path = ""
+
+        if child_path.endswith(os.path.sep + MD_DIR_NAME) or child_path == MD_DIR_NAME:
+            child_path = os.path.dirname(child_path)
+
+        logger.debug(f"Calculated child path: {child_path}")
+        return child_path
+
+    except Exception as e:
+        logger.error(f"Failed to calculate child path: {str(e)}")
+        return None
+
+
 def sync_readme_to_git(readme_path, config, logger):
     """
-    Synchronize a README.md file to git repository if configured
+    Synchronize a README.md file to git repository if configured.
+
+    If force_readme_git_commit is True, always commit (when git_commit is True).
+    Otherwise, commit only when the local README modification time (UTC) is
+    newer than the last commit time for the file in git.
 
     Args:
         readme_path (str): Path to the README.md file to sync
@@ -442,12 +539,10 @@ def sync_readme_to_git(readme_path, config, logger):
         logger (logging.Logger): Logger instance
 
     Returns:
-        bool: True if sync was successful or not needed, False if it failed
+        bool: True if sync was successful, False otherwise
     """
-    # Check if git commit and force_readme_git_commit are enabled
-    if not config.get("git_commit", False) or not config.get(
-        "force_readme_git_commit", False
-    ):
+    # Never commit if git_commit is disabled
+    if not config.get("git_commit", False):
         logger.debug("README git commit not enabled in config, skipping sync")
         return False
 
@@ -466,13 +561,59 @@ def sync_readme_to_git(readme_path, config, logger):
         logger.error(f"Error reading README file: {str(e)}")
         return False
 
-    # Use the existing sync_to_git function to commit the README
+    force = config.get("force_readme_git_commit", False)
+
+    if not force:
+        # Compare local mtime (UTC) with last git commit time (UTC)
+        try:
+            local_mtime = os.path.getmtime(readme_path)
+        except Exception as e:
+            logger.error(f"Error reading README file mtime: {str(e)}")
+            return False
+
+        try:
+            git_manager = _ensure_git_manager(config, logger)
+        except GitFatalError:
+            return False
+
+        if git_manager is None:
+            return False
+
+        child_path = _calc_child_path(readme_path, config, logger)
+        if child_path is None:
+            return False
+
+        git_url = config.get("git_url")
+        success, details = git_manager.get_last_commit_time(
+            readme_path, git_url, git_child_path=child_path
+        )
+
+        if success:
+            git_commit_epoch = details.get("committed_epoch")
+            if git_commit_epoch is not None and local_mtime <= float(git_commit_epoch):
+                logger.debug(
+                    "README.md is not newer than last git commit, skipping sync"
+                )
+                return False
+            logger.debug(
+                "README.md is newer than last git commit, proceeding with sync"
+            )
+        else:
+            # File not in git yet or API error — commit anyway
+            logger.debug(
+                f"Could not get last commit time for README.md "
+                f"({details.get('error', 'unknown')}), proceeding with sync"
+            )
+
+    # Commit the README
     logger.debug(f"Syncing README file to git: {readme_path}")
     result = sync_to_git(readme_path, config, logger)
-    if result:
-        logger.debug(f"README.md commited to git")
+    if result is True:
+        logger.debug("README.md commited to git")
+    elif result is None:
+        logger.debug("README.md skipped: content identical to git")
     else:
-        logger.error(f"Failed to commit README.md to git")
+        logger.error("Failed to commit README.md to git")
     return result
 
 
@@ -486,7 +627,10 @@ def sync_to_git(file_path, config, logger):
         logger (logging.Logger): Logger instance
 
     Returns:
-        bool: True if sync was successful or not needed, False if it failed
+        bool or None:
+            True  — file was committed to git
+            None  — file was not committed because content is identical to git
+            False — sync failed or is not enabled
     """
     global _git_manager, _git_manager_error
 
@@ -501,84 +645,24 @@ def sync_to_git(file_path, config, logger):
         return False
 
     # Initialize GitManager if needed
+    try:
+        _ensure_git_manager(config, logger)
+    except GitFatalError:
+        raise
+
     if _git_manager is None:
-        # Read git URL from config
-        git_url = config.get("git_url")
-        if not git_url:
-            logger.error("Git URL not specified in config")
-            _git_manager_error = True
-            raise GitFatalError("Git URL not specified in config")
+        return False
 
-        # Initialize GitManager
-        logger.debug("Initializing GitManager")
-        try:
-            _git_manager = GitManager()
-        except Exception as e:
-            logger.error(f"Failed to initialize GitManager: {str(e)}")
-            _git_manager_error = True
-            raise GitFatalError(f"Failed to initialize GitManager: {str(e)}") from e
-
-        # Verify git path
-        logger.debug(f"Verifying git path: {git_url}")
-        success, details = _git_manager.verify_path(git_url)
-
-        if not success:
-            error_msg = details.get("error", "Unknown error")
-            logger.error(f"Git path verification failed: {error_msg}")
-            _git_manager_error = True
-            raise GitFatalError(f"Git path verification failed: {error_msg}")
-
-        logger.debug("Git path verified successfully")
+    # Ensure file_path is absolute
+    if not os.path.isabs(file_path):
+        file_path = os.path.abspath(file_path)
 
     # Calculate child_path
+    child_path = _calc_child_path(file_path, config, logger)
+    if child_path is None:
+        return False
+
     try:
-        # Get root folder from config
-        root_folder = config.get("root_folder")
-        if not root_folder:
-            logger.error("root_folder not specified in config")
-            return False
-
-        # Handle relative/absolute paths for root_folder
-        if not os.path.isabs(root_folder):
-            root_folder = os.path.abspath(root_folder)
-
-        # Ensure file_path is absolute
-        if not os.path.isabs(file_path):
-            file_path = os.path.abspath(file_path)
-
-        # Calculate relative path from root to file
-        try:
-            # Normalize paths to handle different slash formats
-            norm_root = os.path.normpath(root_folder)
-            norm_file = os.path.normpath(file_path)
-
-            # Make sure file path starts with root path
-            if not norm_file.startswith(norm_root):
-                logger.error(
-                    f"File path {norm_file} is not under root folder {norm_root}"
-                )
-                return False
-
-            # Calculate child path
-            child_path = os.path.relpath(os.path.dirname(norm_file), norm_root)
-
-            # Normalize '.' (file is directly in root_folder) to empty string
-            if child_path == ".":
-                child_path = ""
-
-            # Remove 'md' dir if it's the last dir
-            if (
-                child_path.endswith(os.path.sep + MD_DIR_NAME)
-                or child_path == MD_DIR_NAME
-            ):
-                child_path = os.path.dirname(child_path)
-
-            logger.debug(f"Calculated child path: {child_path}")
-
-        except Exception as e:
-            logger.error(f"Failed to calculate child path: {str(e)}")
-            return False
-
         # Commit and push file
         git_url = config.get("git_url")
         commit_message = "doc2md#sync"
@@ -589,6 +673,9 @@ def sync_to_git(file_path, config, logger):
         )
 
         if success:
+            if details.get("no_change"):
+                logger.debug(f"Git push skipped: {details.get('message', '')}")
+                return None
             logger.debug(f"Git push successful: {details.get('message', '')}")
             return True
         else:
@@ -618,11 +705,15 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
             logger.debug(f"Created markdown file for {source_path}")
 
             # Sync to git if configured
-            commited_to_git = False
+            git_result = None
             if config:
-                commited_to_git = sync_to_git(target_path, config, logger)
+                git_result = sync_to_git(target_path, config, logger)
 
-            return True, f"MD generated{', commited to git' if commited_to_git else ''}"
+            if git_result is True:
+                git_suffix = ", commited to git"
+            else:
+                git_suffix = ""
+            return True, f"MD generated{git_suffix}"
         else:
             error_msg = (
                 result.stderr.strip()
@@ -718,8 +809,13 @@ def process_directory(
     # Sync README to Git if configured
     result = sync_readme_to_git(readme_path, config, logger)
     # Save important logs for summary
-    if result and important_logs is not None:
-        important_logs.append('"README.md" commited to git')
+    if result is True and important_logs is not None:
+        rel_readme = (
+            os.path.join(rel_dir, README_FILENAME)
+            if rel_dir and rel_dir != "."
+            else README_FILENAME
+        )
+        important_logs.append(f'"{rel_readme}" commited to git')
 
     # Extract masks
     masks = extract_masks(readme_content)

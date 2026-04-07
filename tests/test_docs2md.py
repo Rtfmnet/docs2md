@@ -109,13 +109,23 @@ class TestConfig(unittest.TestCase):
         config = {"common": {"supported_extensions": [".docx", ".pdf"]}}
         self.assertEqual(docs2md.get_supported_extensions(config), {".docx", ".pdf"})
 
-    def test_get_supported_extensions_fallback(self):
-        for config in [None, {}, {"common": {}}]:
-            with self.subTest(config=config):
-                self.assertIs(
-                    docs2md.get_supported_extensions(config),
-                    docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
-                )
+    def test_get_supported_extensions_fallback_none(self):
+        self.assertIs(
+            docs2md.get_supported_extensions(None),
+            docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
+        )
+
+    def test_get_supported_extensions_fallback_empty_dict(self):
+        self.assertIs(
+            docs2md.get_supported_extensions({}),
+            docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
+        )
+
+    def test_get_supported_extensions_fallback_empty_common(self):
+        self.assertIs(
+            docs2md.get_supported_extensions({"common": {}}),
+            docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +577,27 @@ class TestProcessDirectory(unittest.TestCase):
         self.assertIn("ERROR:", logs[0])
         self.assertIn('"bad.docx"', logs[0])
 
+    def test_readme_commit_log_includes_relative_path(self):
+        """README commit log entry must include relative path, not just 'README.md'"""
+        logs = []
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=README_AIKB),
+            patch("docs2md.sync_readme_to_git", return_value=True),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+        ):
+            docs2md.process_directory(
+                "/root/sub",
+                self.config,
+                self.logger,
+                self.stats,
+                logs,
+                root_folder="/root",
+            )
+        self.assertEqual(len(logs), 1)
+        self.assertIn("README.md", logs[0])
+        self.assertIn("sub", logs[0])
+
     def test_logs_relative_path(self):
         self._run(directory="/root/sub", root_folder="/root")
         msgs = [c.args[0] for c in self.logger.debug.call_args_list]
@@ -771,15 +802,29 @@ class TestGitSync(unittest.TestCase):
         self.assertFalse(result)
 
     # --- sync_readme_to_git ---
-    def test_sync_readme_skipped_when_flags_off(self):
-        for gc, fr in [(False, True), (True, False), (False, False)]:
-            with self.subTest(git_commit=gc, force_readme=fr):
-                docs2md._git_manager = None
-                docs2md._git_manager_error = False
-                config = _make_config(git_commit=gc, force_readme_git_commit=fr)
-                self.assertFalse(
-                    docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
-                )
+    def test_sync_readme_skipped_when_git_commit_false_force_true(self):
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = _make_config(git_commit=False, force_readme_git_commit=True)
+        self.assertFalse(
+            docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        )
+
+    def test_sync_readme_skipped_when_git_commit_true_force_false(self):
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = _make_config(git_commit=True, force_readme_git_commit=False)
+        self.assertFalse(
+            docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        )
+
+    def test_sync_readme_skipped_when_both_flags_false(self):
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = _make_config(git_commit=False, force_readme_git_commit=False)
+        self.assertFalse(
+            docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        )
 
     def test_sync_readme_skipped_when_no_file(self):
         config = _make_config(git_commit=True, force_readme_git_commit=True)
@@ -819,6 +864,107 @@ class TestGitSync(unittest.TestCase):
                 docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
             )
         self.logger.error.assert_called()
+
+    # --- sync_readme_to_git: mtime vs git commit time (force=False) ---
+
+    def _readme_mtime_patches(self, local_mtime, git_epoch, git_success=True):
+        """Helper: patch os.path.exists, open, os.path.getmtime and _ensure_git_manager."""
+        mock_gm = Mock()
+        if git_success:
+            mock_gm.get_last_commit_time.return_value = (
+                True,
+                {"committed_epoch": git_epoch},
+            )
+        else:
+            mock_gm.get_last_commit_time.return_value = (
+                False,
+                {"error": "file not found"},
+            )
+        return (
+            patch("os.path.exists", return_value=True),
+            patch("builtins.open", new_callable=mock_open, read_data=README_AIKB),
+            patch("os.path.getmtime", return_value=local_mtime),
+            patch("docs2md._ensure_git_manager", return_value=mock_gm),
+            patch("docs2md._calc_child_path", return_value=""),
+            patch("docs2md.sync_to_git", return_value=True),
+        )
+
+    def test_sync_readme_commits_when_local_is_newer(self):
+        """force=False: local mtime newer than git commit → commit"""
+        config = _make_git_config(force_readme_git_commit=False)
+        patches = self._readme_mtime_patches(local_mtime=2000.0, git_epoch=1000.0)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5] as mock_sync,
+        ):
+            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        self.assertTrue(result)
+        mock_sync.assert_called_once()
+
+    def test_sync_readme_skipped_when_local_is_not_newer(self):
+        """force=False: local mtime older than git commit → skip"""
+        config = _make_git_config(force_readme_git_commit=False)
+        patches = self._readme_mtime_patches(local_mtime=1000.0, git_epoch=2000.0)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5] as mock_sync,
+        ):
+            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        self.assertFalse(result)
+        mock_sync.assert_not_called()
+
+    def test_sync_readme_commits_when_get_last_commit_time_fails(self):
+        """force=False: get_last_commit_time fails (not in git yet) → commit anyway"""
+        config = _make_git_config(force_readme_git_commit=False)
+        patches = self._readme_mtime_patches(
+            local_mtime=1000.0, git_epoch=None, git_success=False
+        )
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5] as mock_sync,
+        ):
+            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        self.assertTrue(result)
+        mock_sync.assert_called_once()
+
+    def test_sync_readme_returns_false_when_ensure_git_manager_raises(self):
+        """force=False: _ensure_git_manager raises GitFatalError → return False"""
+        config = _make_git_config(force_readme_git_commit=False)
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("builtins.open", new_callable=mock_open, read_data=README_AIKB),
+            patch("os.path.getmtime", return_value=1000.0),
+            patch(
+                "docs2md._ensure_git_manager",
+                side_effect=docs2md.GitFatalError("init failed"),
+            ),
+        ):
+            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        self.assertFalse(result)
+
+    def test_sync_readme_returns_false_when_git_manager_error_set(self):
+        """force=False: _git_manager_error already True → _ensure_git_manager returns None → False"""
+        docs2md._git_manager_error = True
+        config = _make_git_config(force_readme_git_commit=False)
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("builtins.open", new_callable=mock_open, read_data=README_AIKB),
+            patch("os.path.getmtime", return_value=1000.0),
+        ):
+            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
+        self.assertFalse(result)
 
 
 # ---------------------------------------------------------------------------
