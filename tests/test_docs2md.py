@@ -21,8 +21,10 @@ def _make_stats():
         "dirs_processed": 0,
         "dirs_skipped": 0,
         "files_generated": 0,
+        "files_committed": 0,
         "files_skipped": 0,
         "files_errors": 0,
+        "files_git_identical": 0,
     }
 
 
@@ -442,6 +444,18 @@ class TestConversion(unittest.TestCase):
 
     @patch("subprocess.run", return_value=Mock(returncode=0, stdout=""))
     @patch("os.makedirs")
+    def test_convert_with_git_identical_has_suffix(self, *_):
+        """When sync_to_git returns 'no_change', message must contain 'git identical'."""
+        config = _make_git_config()
+        with patch("docs2md.sync_to_git", return_value="no_change"):
+            ok, msg = docs2md.convert_to_markdown(
+                "/src.docx", "/dst.md", self.logger, config
+            )
+        self.assertTrue(ok)
+        self.assertIn("git identical", msg)
+
+    @patch("subprocess.run", return_value=Mock(returncode=0, stdout=""))
+    @patch("os.makedirs")
     def test_convert_git_fatal_error_propagates(self, *_):
         config = _make_git_config()
         with patch("docs2md.sync_to_git", side_effect=docs2md.GitFatalError("auth")):
@@ -560,6 +574,15 @@ class TestProcessDirectory(unittest.TestCase):
             file_result=(None, "Skipped due to MD is up to date"),
         )
         self.assertEqual(self.stats["files_skipped"], 1)
+
+    def test_files_git_identical_counted(self):
+        """When process_file returns success with 'git identical' in message, counter increments."""
+        self._run(
+            files=["same.docx"],
+            file_result=(True, "MD generated, git identical"),
+        )
+        self.assertEqual(self.stats["files_generated"], 1)
+        self.assertEqual(self.stats["files_git_identical"], 1)
 
     def test_important_logs_success(self):
         logs = []
@@ -769,6 +792,18 @@ class TestGitSync(unittest.TestCase):
         with patch("docs2md.GitManager", return_value=mock_gm):
             result = docs2md.sync_to_git("/root/f.md", self._git_config(), self.logger)
         self.assertFalse(result)
+
+    def test_sync_to_git_no_change_returns_no_change(self):
+        """When remote file is identical, sync_to_git must return 'no_change'."""
+        mock_gm = Mock()
+        mock_gm.verify_path.return_value = (True, {"contents_count": 1})
+        mock_gm.push_commit_file.return_value = (
+            True,
+            {"message": "File is identical to remote file in git", "no_change": True},
+        )
+        with patch("docs2md.GitManager", return_value=mock_gm):
+            result = docs2md.sync_to_git("/root/f.md", self._git_config(), self.logger)
+        self.assertEqual(result, "no_change")
 
     def test_sync_to_git_child_path_strips_md_dir(self):
         """Files inside an 'md/' subdir should commit to the parent path"""
@@ -1053,6 +1088,11 @@ class TestMain(unittest.TestCase):
     def test_summary_logged(self):
         captured, _, _ = self._run_main()
         self.assertIn("SUMMARY:", captured)
+
+    def test_summary_git_identical_line_present(self):
+        """Summary must include the 'Files skipped as identical to remote ones in git' line."""
+        captured, _, _ = self._run_main()
+        self.assertTrue(any("identical to remote" in line for line in captured))
 
     def test_summary_blank_line_before_header(self):
         captured, _, _ = self._run_main()

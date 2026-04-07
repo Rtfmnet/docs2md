@@ -610,7 +610,7 @@ def sync_readme_to_git(readme_path, config, logger):
     result = sync_to_git(readme_path, config, logger)
     if result is True:
         logger.debug("README.md commited to git")
-    elif result is None:
+    elif result is None or result == "no_change":
         logger.debug("README.md skipped: content identical to git")
     else:
         logger.error("Failed to commit README.md to git")
@@ -675,7 +675,7 @@ def sync_to_git(file_path, config, logger):
         if success:
             if details.get("no_change"):
                 logger.debug(f"Git push skipped: {details.get('message', '')}")
-                return None
+                return "no_change"
             logger.debug(f"Git push successful: {details.get('message', '')}")
             return True
         else:
@@ -711,6 +711,8 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
 
             if git_result is True:
                 git_suffix = ", commited to git"
+            elif git_result == "no_change":
+                git_suffix = ", git identical"
             else:
                 git_suffix = ""
             return True, f"MD generated{git_suffix}"
@@ -809,13 +811,17 @@ def process_directory(
     # Sync README to Git if configured
     result = sync_readme_to_git(readme_path, config, logger)
     # Save important logs for summary
-    if result is True and important_logs is not None:
-        rel_readme = (
-            os.path.join(rel_dir, README_FILENAME)
-            if rel_dir and rel_dir != "."
-            else README_FILENAME
-        )
-        important_logs.append(f'"{rel_readme}" commited to git')
+    if result is True:
+        stats["files_committed"] += 1
+        if important_logs is not None:
+            rel_readme = (
+                os.path.join(rel_dir, README_FILENAME)
+                if rel_dir and rel_dir != "."
+                else README_FILENAME
+            )
+            important_logs.append(f'"{rel_readme}" commited to git')
+    elif result == "no_change":
+        stats["files_git_identical"] += 1
 
     # Extract masks
     masks = extract_masks(readme_content)
@@ -849,6 +855,10 @@ def process_directory(
         if success is True:
             dir_stats["generated"] += 1
             stats["files_generated"] += 1
+            if "commited to git" in message:
+                stats["files_committed"] += 1
+            if "git identical" in message:
+                stats["files_git_identical"] += 1
             logger.debug(f'"{rel_file}" {message}')
             # Save important logs for summary
             if important_logs is not None:
@@ -960,8 +970,10 @@ def main():
             "dirs_processed": 0,
             "dirs_skipped": 0,
             "files_generated": 0,
+            "files_committed": 0,
             "files_skipped": 0,
             "files_errors": 0,
+            "files_git_identical": 0,
         }
 
         process_directories_recursively(
@@ -974,7 +986,9 @@ def main():
         logger.info(f"Directories processed: {stats['dirs_processed']}")
         logger.info(f"Directories skipped: {stats['dirs_skipped']}")
         logger.info(f"Files generated: {stats['files_generated']}")
+        logger.info(f"Files commited to git: {stats['files_committed']}")
         logger.info(f"Files skipped as actual: {stats['files_skipped']}")
+        logger.info(f"Files skipped as identical to remote ones in git: {stats['files_git_identical']}")
         logger.info(f"Files with errors: {stats['files_errors']}")
 
         # Show important logs in summary

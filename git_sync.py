@@ -248,7 +248,7 @@ class GitManager:
                     ).decode("utf-8")
                     if remote_content == file_content:
                         return True, {
-                            "message": "File already up to date",
+                            "message": "File is identical to remote file in git",
                             "no_change": True,
                             "file_path": target_path,
                             "project_path": project_path,
@@ -522,7 +522,7 @@ class GitManager:
                     remote_content = base64.b64decode(remote_b64).decode("utf-8")
                     if remote_content == file_content:
                         return True, {
-                            "message": "File already up to date",
+                            "message": "File is identical to remote file in git",
                             "no_change": True,
                             "file_path": target_path,
                             "project_path": f"{owner}/{repo}",
@@ -780,21 +780,21 @@ class GitManager:
                 f"&includeContent=true"
                 f"&api-version={api_version}"
             )
-            check_response = requests.get(items_url, headers=headers)
-            if check_response.status_code == 200:
-                file_exists = True
-                try:
+            try:
+                check_response = requests.get(items_url, headers=headers)
+                if check_response.status_code == 200:
+                    file_exists = True
                     remote_content = check_response.json().get("content", "")
                     if remote_content == file_content:
                         return True, {
-                            "message": "File already up to date",
+                            "message": "File is identical to remote file in git",
                             "no_change": True,
                             "file_path": target_path,
                             "project_path": f"{parts['org']}/{parts['project']}/{parts['repo']}",
                             "branch": branch,
                         }
-                except Exception:
-                    pass
+            except Exception:
+                file_exists = False
 
             # Get the latest commit SHA on the branch (required for push)
             refs_url = f"{base_url}/refs?filter=heads/{urllib.parse.quote(branch)}&api-version={api_version}"

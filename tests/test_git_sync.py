@@ -364,7 +364,7 @@ class TestGitManager(unittest.TestCase):
         # Should succeed but report no change
         self.assertTrue(success)
         self.assertTrue(details.get("no_change"))
-        self.assertEqual(details["message"], "File already up to date")
+        self.assertEqual(details["message"], "File is identical to remote file in git")
 
         # No actual write calls should have been made
         self.assertFalse(mock_put.called)
@@ -766,7 +766,7 @@ class TestGitManagerGitHub(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertTrue(details.get("no_change"))
-        self.assertEqual(details["message"], "File already up to date")
+        self.assertEqual(details["message"], "File is identical to remote file in git")
         self.assertFalse(mock_put.called)
 
 
@@ -989,8 +989,48 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertTrue(details.get("no_change"))
-        self.assertEqual(details["message"], "File already up to date")
+        self.assertEqual(details["message"], "File is identical to remote file in git")
         self.assertFalse(mock_post.called)
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.post")
+    @patch("requests.get")
+    def test_push_commit_file_azure_check_exception_still_writes(
+        self, mock_get, mock_post, mock_init
+    ):
+        """Azure: when items GET raises an exception, file_exists=False and write proceeds."""
+        mock_init.return_value = None
+
+        # items check raises an exception (e.g. network error)
+        mock_refs_response = Mock()
+        mock_refs_response.status_code = 200
+        mock_refs_response.json.return_value = {
+            "value": [{"objectId": "deadbeef0003", "name": "refs/heads/main"}]
+        }
+        mock_get.side_effect = [Exception("network error"), mock_refs_response]
+
+        mock_post_response = Mock()
+        mock_post_response.status_code = 201
+        mock_post_response.json.return_value = {}
+        mock_post_response.text = "{}"
+        mock_post.return_value = mock_post_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        m = unittest.mock.mock_open(read_data="content")
+        with patch("builtins.open", m):
+            success, details = gm.push_commit_file(
+                "TestFile.md",
+                "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain",
+                "doc2md#sync",
+            )
+
+        # Write should still proceed with changeType "add" (file_exists=False)
+        self.assertTrue(success)
+        _, kwargs = mock_post.call_args
+        change_type = kwargs["json"]["commits"][0]["changes"][0]["changeType"]
+        self.assertEqual(change_type, "add")
 
 
 class TestGetLastCommitTime(unittest.TestCase):

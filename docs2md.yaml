@@ -4,7 +4,7 @@ tests:
   root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests'
   force_md_generation: false
   git_commit: true
-  force_readme_git_commit: true
+  force_readme_git_commit: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
 
 fa:
@@ -30,7 +30,7 @@ psaas:
 
 common:
   pause_before_exit: false
-  log_level: DEBUG # INFO DEBUG ERROR
+  log_level: INFO # INFO DEBUG ERROR
   supported_extensions:
     - .asciidoc
     - .biblatex
