@@ -1,4 +1,4 @@
-active_project: tests  # <-- only this line changes
+active_project: small_tests  # <-- only this line changes
 
 tests:
   root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests'
@@ -6,6 +6,13 @@ tests:
   git_commit: true
   force_readme_git_commit: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
+
+small_tests:
+  root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests\small_tests'
+  force_md_generation: false
+  git_commit: true
+  force_readme_git_commit: false
+  git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests/small_tests'
 
 fa:
   root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\FA'
