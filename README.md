@@ -19,7 +19,7 @@ Config-driven — no CLI arguments, only `docs2md.yaml`.
 
 Supports two formats:
 
-**Multi-project** (recommended) — set `active_project` to switch between named project sections:
+Set `active_project` to switch between named project sections:
 
 ```yaml
 active_project: my_project   # change this to switch projects
@@ -39,8 +39,6 @@ common:
     - .pptx
     - .xlsx
 ```
-
-**Legacy flat format** — all keys at top level (no `active_project`).
 
 ### Config Keys
 
