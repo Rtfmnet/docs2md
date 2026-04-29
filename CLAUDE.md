@@ -68,8 +68,16 @@ Key fields:
 - `common.pause_before_exit` — pause on exit
 
 ## Testing Conventions
-
 - Tests use `unittest` (compatible with pytest). No `pytest.ini` or `pyproject.toml` exists.
 - Unit tests mock all external calls (filesystem, subprocess, requests).
 - Integration tests (`e2e_docs2md.py`) create real temp directories under `tests/test_data/` and require pandoc installed; they clean up in `tearDown()`.
-- `active-prompt.md` describes the change workflow: plan → temp test → unit tests pass → add new unit test → unit tests pass again.
+- Write the minimum tests needed based on change impact.
+  - Low (cosmetic): no tests.
+  - Medium (not critical for overall behavior change): 1 unit test.
+  - High (shared or critical logic): 1–3 unit + 1–3 e2e tests
+
+## Prompt Execution Conventions
+- Running temporary tests: After making required changes in files, run the temporary e2e test locally to verify the change
+- User testing: After running temporary successfully ask user to verify changes by themselves  
+- Use 'ai-sandbox' folder for any temporary files created during the session
+- Use 'ai-results' folder for providing any files asked by user

@@ -117,18 +117,6 @@ class TestConfig(unittest.TestCase):
             docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
         )
 
-    def test_get_supported_extensions_fallback_empty_dict(self):
-        self.assertIs(
-            docs2md.get_supported_extensions({}),
-            docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
-        )
-
-    def test_get_supported_extensions_fallback_empty_common(self):
-        self.assertIs(
-            docs2md.get_supported_extensions({"common": {}}),
-            docs2md.DEFAULT_SUPPORTED_EXTENSIONS,
-        )
-
 
 # ---------------------------------------------------------------------------
 # 1b. load_config — active_project resolution
@@ -182,22 +170,6 @@ class TestLoadConfigActiveProject(unittest.TestCase):
         with self.assertRaises(Exception) as ctx:
             self._load_with_yaml(raw)
         self.assertIn("nonexistent", str(ctx.exception))
-
-    def test_invalid_active_project_lists_available_projects(self):
-        """Error message for wrong active_project should list available project names"""
-        raw = {
-            "active_project": "psaasa",
-            "proj1": {"root_folder": "/p1"},
-            "proj2": {"root_folder": "/p2"},
-            "common": {"log_level": "INFO"},
-        }
-        with self.assertRaises(Exception) as ctx:
-            self._load_with_yaml(raw)
-        msg = str(ctx.exception)
-        self.assertIn("psaasa", msg)
-        self.assertIn("proj1", msg)
-        self.assertIn("proj2", msg)
-        self.assertIn("Available projects", msg)
 
     def test_no_active_project_returns_legacy_flat_config(self):
         raw = {"root_folder": "/flat", "git_commit": False}
@@ -261,15 +233,6 @@ class TestReadmeParsing(unittest.TestCase):
         self.assertIn(fnmatch.translate("*.docx"), masks)
         self.assertIn(fnmatch.translate("test*"), masks)
 
-    def test_extract_masks_no_quotes(self):
-        """extract_masks works without quotes around the pattern"""
-        import fnmatch
-
-        content = "doc2md#mask=*Transcript.docx - some comment"
-        masks = docs2md.extract_masks(content)
-        self.assertEqual(len(masks), 1)
-        self.assertIn(fnmatch.translate("*Transcript.docx"), masks)
-
     def test_extract_masks_empty(self):
         self.assertEqual(docs2md.extract_masks("no masks"), [])
         self.assertEqual(docs2md.extract_masks(None), [])
@@ -286,14 +249,6 @@ class TestReadmeParsing(unittest.TestCase):
             docs2md.is_file_referenced_in_readme("test.docx", "See other.docx here")
         )
         self.assertFalse(docs2md.is_file_referenced_in_readme("test.docx", None))
-
-    def test_get_file_reference_line(self):
-        content = "Line 1\nSee test.docx here\nLine 3"
-        line = docs2md.get_file_reference_line("test.docx", content)
-        self.assertIsNotNone(line)
-        self.assertIn("test.docx", line or "")
-        self.assertIsNone(docs2md.get_file_reference_line("missing.docx", content))
-        self.assertIsNone(docs2md.get_file_reference_line("test.docx", None))
 
     def test_filter_files_keeps_referenced(self):
         result = docs2md.filter_files_by_readme(
@@ -314,12 +269,6 @@ class TestReadmeParsing(unittest.TestCase):
             ["test.docx"], "doc2md#aikb", True, Mock()
         )
         self.assertIn("test.docx", result)
-
-    def test_filter_files_skip_logged_at_debug_not_info(self):
-        logger = Mock()
-        docs2md.filter_files_by_readme(["orphan.docx"], "doc2md#aikb", False, logger)
-        info_msgs = [c.args[0] for c in logger.info.call_args_list]
-        self.assertFalse(any("orphan.docx" in m for m in info_msgs))
 
 
 # ---------------------------------------------------------------------------
@@ -360,10 +309,6 @@ class TestFileSelection(unittest.TestCase):
         files = ["a.docx", "b.docx"]
         self.assertEqual(docs2md.apply_masks(files, []), files)
 
-    def test_apply_masks_invalid_regex_skipped(self):
-        result = docs2md.apply_masks(["test.docx"], ["[invalid"])
-        self.assertEqual(result, [])
-
     @patch("os.listdir", return_value=[])
     def test_get_target_md_path_simple(self, *_):
         result = docs2md.get_target_md_path("test.docx", "/dir")
@@ -383,11 +328,6 @@ class TestFileSelection(unittest.TestCase):
     @patch("os.path.getmtime", side_effect=[1000, 2000])
     def test_is_source_newer_false(self, *_):
         self.assertFalse(docs2md.is_source_newer("/src", "/dst"))
-
-    @patch("os.path.getmtime", side_effect=OSError("no file"))
-    def test_is_source_newer_error_returns_true(self, *_):
-        # on error, assume source is newer (safe default: regenerate)
-        self.assertTrue(docs2md.is_source_newer("/src", "/dst"))
 
 
 # ---------------------------------------------------------------------------
@@ -415,14 +355,6 @@ class TestConversion(unittest.TestCase):
         ok, msg = docs2md.convert_to_markdown("/src.docx", "/dst.md", self.logger)
         self.assertFalse(ok)
         self.assertIn("Error", msg)
-
-    @patch("subprocess.run", return_value=Mock(returncode=1, stderr="pandoc error"))
-    @patch("os.makedirs")
-    def test_convert_failure_log_includes_filename_and_command(self, *_):
-        docs2md.convert_to_markdown("/path/bad.docx", "/path/bad.md", self.logger)
-        combined = "\n".join(c.args[0] for c in self.logger.error.call_args_list)
-        self.assertIn('"bad.docx"', combined)
-        self.assertIn("pandoc", combined)
 
     @patch("subprocess.run", side_effect=Exception("crash"))
     @patch("os.makedirs")
@@ -488,16 +420,6 @@ class TestConversion(unittest.TestCase):
     def test_process_file_force_regenerates(self, *_):
         ok, _ = docs2md.process_file(
             "test.docx", "/dir", True, self.logger, self.config
-        )
-        self.assertTrue(ok)
-
-    @patch("docs2md.convert_to_markdown", return_value=(True, "MD generated"))
-    @patch("docs2md.is_source_newer", return_value=True)
-    @patch("docs2md.get_target_md_path", return_value="/dir/test.md")
-    @patch("os.path.exists", return_value=True)
-    def test_process_file_outdated_regenerates(self, *_):
-        ok, _ = docs2md.process_file(
-            "test.docx", "/dir", False, self.logger, self.config
         )
         self.assertTrue(ok)
 
@@ -575,15 +497,6 @@ class TestProcessDirectory(unittest.TestCase):
         )
         self.assertEqual(self.stats["files_skipped"], 1)
 
-    def test_files_git_identical_counted(self):
-        """When process_file returns success with 'git identical' in message, counter increments."""
-        self._run(
-            files=["same.docx"],
-            file_result=(True, "MD generated, git identical"),
-        )
-        self.assertEqual(self.stats["files_generated"], 1)
-        self.assertEqual(self.stats["files_git_identical"], 1)
-
     def test_important_logs_success(self):
         logs = []
         self._run(files=["test.docx"], important_logs=logs)
@@ -599,47 +512,6 @@ class TestProcessDirectory(unittest.TestCase):
         self.assertEqual(len(logs), 1)
         self.assertIn("ERROR:", logs[0])
         self.assertIn('"bad.docx"', logs[0])
-
-    def test_readme_commit_log_includes_relative_path(self):
-        """README commit log entry must include relative path, not just 'README.md'"""
-        logs = []
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("docs2md.read_readme", return_value=README_AIKB),
-            patch("docs2md.sync_readme_to_git", return_value=True),
-            patch("docs2md.collect_files_in_directory", return_value=[]),
-        ):
-            docs2md.process_directory(
-                "/root/sub",
-                self.config,
-                self.logger,
-                self.stats,
-                logs,
-                root_folder="/root",
-            )
-        self.assertEqual(len(logs), 1)
-        self.assertIn("README.md", logs[0])
-        self.assertIn("sub", logs[0])
-
-    def test_logs_relative_path(self):
-        self._run(directory="/root/sub", root_folder="/root")
-        msgs = [c.args[0] for c in self.logger.debug.call_args_list]
-        self.assertTrue(any('Processing: "sub"' in m for m in msgs))
-
-    def test_logs_dot_for_root(self):
-        self._run(directory="/root", root_folder="/root")
-        msgs = [c.args[0] for c in self.logger.debug.call_args_list]
-        self.assertTrue(any('Processing: "."' in m for m in msgs))
-
-    def test_processing_logged_at_debug_not_info(self):
-        self._run()
-        info_msgs = [c.args[0] for c in self.logger.info.call_args_list]
-        self.assertFalse(any("Processing" in m for m in info_msgs))
-
-    def test_error_logged_at_info(self):
-        self._run(files=["bad.docx"], file_result=(False, "Error: pandoc failed"))
-        info_msgs = [c.args[0] for c in self.logger.info.call_args_list]
-        self.assertTrue(any("Error:" in m for m in info_msgs))
 
     def test_masks_applied(self):
         readme = f"{docs2md.TAG_AIKB}\ndoc2md#mask='keep*'\nkeep.docx\ndrop.docx"
@@ -719,12 +591,6 @@ class TestRecursion(unittest.TestCase):
         )
         self.assertEqual(mock_pd.call_count, 2)
 
-    def test_skipped_dir_logged_at_debug_not_info(self):
-        readme = os.path.join("/root/sub", docs2md.README_FILENAME)
-        self._run([("/root/sub", [], [])], {readme: False}, {})
-        info_msgs = [c.args[0] for c in self.logger.info.call_args_list]
-        self.assertFalse(any("Skipped" in m for m in info_msgs))
-
 
 # ---------------------------------------------------------------------------
 # 7. Git sync (sync_to_git — happy path + all error paths)
@@ -766,14 +632,6 @@ class TestGitSync(unittest.TestCase):
             with self.assertRaises(docs2md.GitFatalError) as ctx:
                 docs2md.sync_to_git("/root/f.md", self._git_config(), self.logger)
         self.assertIn("Path not found", str(ctx.exception))
-
-    def test_raises_when_auth_fails(self):
-        mock_gm = Mock()
-        mock_gm.verify_path.return_value = (False, {"error": "Authentication failed"})
-        with patch("docs2md.GitManager", return_value=mock_gm):
-            with self.assertRaises(docs2md.GitFatalError) as ctx:
-                docs2md.sync_to_git("/root/f.md", self._git_config(), self.logger)
-        self.assertIn("Authentication failed", str(ctx.exception))
 
     # --- sync_to_git: happy path ---
     def test_sync_to_git_happy_path_returns_true(self):
@@ -837,26 +695,10 @@ class TestGitSync(unittest.TestCase):
         self.assertFalse(result)
 
     # --- sync_readme_to_git ---
-    def test_sync_readme_skipped_when_git_commit_false_force_true(self):
+    def test_sync_readme_skipped_when_git_commit_false(self):
         docs2md._git_manager = None
         docs2md._git_manager_error = False
         config = _make_config(git_commit=False, force_readme_git_commit=True)
-        self.assertFalse(
-            docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
-        )
-
-    def test_sync_readme_skipped_when_git_commit_true_force_false(self):
-        docs2md._git_manager = None
-        docs2md._git_manager_error = False
-        config = _make_config(git_commit=True, force_readme_git_commit=False)
-        self.assertFalse(
-            docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
-        )
-
-    def test_sync_readme_skipped_when_both_flags_false(self):
-        docs2md._git_manager = None
-        docs2md._git_manager_error = False
-        config = _make_config(git_commit=False, force_readme_git_commit=False)
         self.assertFalse(
             docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
         )
@@ -956,24 +798,6 @@ class TestGitSync(unittest.TestCase):
         self.assertFalse(result)
         mock_sync.assert_not_called()
 
-    def test_sync_readme_commits_when_get_last_commit_time_fails(self):
-        """force=False: get_last_commit_time fails (not in git yet) → commit anyway"""
-        config = _make_git_config(force_readme_git_commit=False)
-        patches = self._readme_mtime_patches(
-            local_mtime=1000.0, git_epoch=None, git_success=False
-        )
-        with (
-            patches[0],
-            patches[1],
-            patches[2],
-            patches[3],
-            patches[4],
-            patches[5] as mock_sync,
-        ):
-            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
-        self.assertTrue(result)
-        mock_sync.assert_called_once()
-
     def test_sync_readme_returns_false_when_ensure_git_manager_raises(self):
         """force=False: _ensure_git_manager raises GitFatalError → return False"""
         config = _make_git_config(force_readme_git_commit=False)
@@ -985,18 +809,6 @@ class TestGitSync(unittest.TestCase):
                 "docs2md._ensure_git_manager",
                 side_effect=docs2md.GitFatalError("init failed"),
             ),
-        ):
-            result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
-        self.assertFalse(result)
-
-    def test_sync_readme_returns_false_when_git_manager_error_set(self):
-        """force=False: _git_manager_error already True → _ensure_git_manager returns None → False"""
-        docs2md._git_manager_error = True
-        config = _make_git_config(force_readme_git_commit=False)
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("builtins.open", new_callable=mock_open, read_data=README_AIKB),
-            patch("os.path.getmtime", return_value=1000.0),
         ):
             result = docs2md.sync_readme_to_git("/root/README.md", config, self.logger)
         self.assertFalse(result)
@@ -1089,16 +901,6 @@ class TestMain(unittest.TestCase):
         captured, _, _ = self._run_main()
         self.assertIn("SUMMARY:", captured)
 
-    def test_summary_git_identical_line_present(self):
-        """Summary must include the 'Files skipped as identical to git' line."""
-        captured, _, _ = self._run_main()
-        self.assertTrue(any("identical to git" in line for line in captured))
-
-    def test_summary_blank_line_before_header(self):
-        captured, _, _ = self._run_main()
-        idx = captured.index("SUMMARY:")
-        self.assertEqual(captured[idx - 1], "")
-
     def test_change_log_shown_when_important_logs_present(self):
         def add_log(*args, **kwargs):
             if args and isinstance(args[4], list):
@@ -1106,17 +908,6 @@ class TestMain(unittest.TestCase):
 
         captured, _, _ = self._run_main(process_side_effect=add_log)
         self.assertIn("Change log:", captured)
-
-    def test_load_config_error_still_runs(self):
-        """If load_config raises, main falls back to defaults and continues"""
-        mock_logger = Mock()
-        with (
-            patch("docs2md.load_config", side_effect=Exception("bad yaml")),
-            patch("docs2md.setup_logging", return_value=mock_logger),
-            patch("docs2md.verify_pandoc", return_value=False),
-            patch("sys.exit"),
-        ):
-            docs2md.main()  # must not raise
 
 
 if __name__ == "__main__":

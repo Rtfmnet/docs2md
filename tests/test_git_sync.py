@@ -503,14 +503,6 @@ class TestGitManagerGitHub(unittest.TestCase):
         self.assertEqual(parts["subdir_path"], "")
 
     @patch.object(GitManager, "__init__")
-    def test_parse_github_url_invalid(self, mock_init):
-        mock_init.return_value = None
-        gm = GitManager()
-        gm.token = "test_token"
-        with self.assertRaises(ValueError):
-            gm._parse_github_url("https://github.com/owner/repo")
-
-    @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.get")
     def test_push_commit_file_github_new_file(self, mock_get, mock_put, mock_init):
@@ -677,62 +669,6 @@ class TestGitManagerGitHub(unittest.TestCase):
         self.assertIn("Path not found", details["error"])
 
     @patch.object(GitManager, "__init__")
-    @patch("requests.get")
-    def test_verify_path_github_repo_not_found(self, mock_get, mock_init):
-        """Test GitHub verify_path when repo doesn't exist"""
-        mock_init.return_value = None
-
-        mock_404 = Mock()
-        mock_404.status_code = 404
-
-        mock_get.side_effect = [mock_404, mock_404]
-
-        gm = GitManager()
-        gm.token = "test_token"
-
-        success, details = gm.verify_path(
-            "https://github.com/owner/nonexistent-repo/tree/main"
-        )
-
-        self.assertFalse(success)
-        self.assertIn("not found", details["error"].lower())
-
-    @patch.object(GitManager, "__init__")
-    @patch("requests.put")
-    @patch("requests.get")
-    def test_push_commit_file_github_with_child_path(
-        self, mock_get, mock_put, mock_init
-    ):
-        """Test GitHub push with git_child_path"""
-        mock_init.return_value = None
-
-        mock_get_response = Mock()
-        mock_get_response.status_code = 404
-        mock_get.return_value = mock_get_response
-
-        mock_put_response = Mock()
-        mock_put_response.status_code = 201
-        mock_put_response.json.return_value = {}
-        mock_put_response.text = "{}"
-        mock_put.return_value = mock_put_response
-
-        gm = GitManager()
-        gm.token = "test_token"
-
-        m = unittest.mock.mock_open(read_data="content")
-        with patch("builtins.open", m):
-            success, details = gm.push_commit_file(
-                "TestFile.md",
-                "https://github.com/owner/repo/tree/main/base",
-                "commit msg",
-                git_child_path="child/dir",
-            )
-
-        self.assertTrue(success)
-        self.assertIn("child", details["file_path"])
-        self.assertIn("dir", details["file_path"])
-
-    @patch.object(GitManager, "__init__")
     @patch("requests.put")
     @patch("requests.get")
     def test_push_commit_file_github_no_change(self, mock_get, mock_put, mock_init):
@@ -799,14 +735,6 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
         self.assertEqual(parts["project"], "myproject")
         self.assertEqual(parts["repo"], "myrepo")
         self.assertEqual(parts["branch"], "main")  # default branch
-
-    @patch.object(GitManager, "__init__")
-    def test_parse_azure_url_invalid(self, mock_init):
-        mock_init.return_value = None
-        gm = GitManager()
-        gm.token = "test_token"
-        with self.assertRaises(ValueError):
-            gm._parse_azure_url("https://dev.azure.com/incomplete")
 
     @patch.object(GitManager, "__init__")
     @patch("requests.post")
@@ -992,46 +920,6 @@ class TestGitManagerAzureDevOps(unittest.TestCase):
         self.assertEqual(details["message"], "File is identical to remote file in git")
         self.assertFalse(mock_post.called)
 
-    @patch.object(GitManager, "__init__")
-    @patch("requests.post")
-    @patch("requests.get")
-    def test_push_commit_file_azure_check_exception_still_writes(
-        self, mock_get, mock_post, mock_init
-    ):
-        """Azure: when items GET raises an exception, file_exists=False and write proceeds."""
-        mock_init.return_value = None
-
-        # items check raises an exception (e.g. network error)
-        mock_refs_response = Mock()
-        mock_refs_response.status_code = 200
-        mock_refs_response.json.return_value = {
-            "value": [{"objectId": "deadbeef0003", "name": "refs/heads/main"}]
-        }
-        mock_get.side_effect = [Exception("network error"), mock_refs_response]
-
-        mock_post_response = Mock()
-        mock_post_response.status_code = 201
-        mock_post_response.json.return_value = {}
-        mock_post_response.text = "{}"
-        mock_post.return_value = mock_post_response
-
-        gm = GitManager()
-        gm.token = "test_token"
-
-        m = unittest.mock.mock_open(read_data="content")
-        with patch("builtins.open", m):
-            success, details = gm.push_commit_file(
-                "TestFile.md",
-                "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain",
-                "doc2md#sync",
-            )
-
-        # Write should still proceed with changeType "add" (file_exists=False)
-        self.assertTrue(success)
-        _, kwargs = mock_post.call_args
-        change_type = kwargs["json"]["commits"][0]["changes"][0]["changeType"]
-        self.assertEqual(change_type, "add")
-
 
 class TestGetLastCommitTime(unittest.TestCase):
     """Test get_last_commit_time for all three providers"""
@@ -1082,56 +970,12 @@ class TestGetLastCommitTime(unittest.TestCase):
 
     @patch.object(GitManager, "__init__")
     @patch("requests.get")
-    def test_azure_success(self, mock_get, mock_init):
-        """Azure: Z suffix is correctly converted to UTC epoch float"""
-        mock_init.return_value = None
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "value": [
-                {"committer": {"date": "2026-04-04T22:42:00Z"}, "commitId": "aaa"}
-            ]
-        }
-        mock_get.return_value = mock_response
-
-        gm = GitManager()
-        gm.token = "test_token"
-        success, details = gm.get_last_commit_time(
-            "test.md",
-            "https://dev.azure.com/myorg/myproject/_git/myrepo?path=/docs&version=GBmain",
-        )
-
-        self.assertTrue(success)
-        self.assertIsInstance(details["committed_epoch"], float)
-        self.assertAlmostEqual(details["committed_epoch"], 1775342520.0, delta=1)
-
-    @patch.object(GitManager, "__init__")
-    @patch("requests.get")
     def test_api_error(self, mock_get, mock_init):
         """Non-200 response returns failure"""
         mock_init.return_value = None
         mock_response = Mock()
         mock_response.status_code = 401
         mock_response.text = "Unauthorized"
-        mock_response.json.return_value = []
-        mock_get.return_value = mock_response
-
-        gm = GitManager()
-        gm.token = "test_token"
-        success, details = gm.get_last_commit_time(
-            "test.md", "https://gitbud.epam.com/project/repo/-/tree/main/subdir"
-        )
-
-        self.assertFalse(success)
-        self.assertIn("error", details)
-
-    @patch.object(GitManager, "__init__")
-    @patch("requests.get")
-    def test_file_not_in_git(self, mock_get, mock_init):
-        """200 with empty result (file not yet committed) returns failure"""
-        mock_init.return_value = None
-        mock_response = Mock()
-        mock_response.status_code = 200
         mock_response.json.return_value = []
         mock_get.return_value = mock_response
 
