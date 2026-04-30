@@ -77,7 +77,13 @@ Key fields:
   - High (shared or critical logic): 1–3 unit + 1–3 e2e tests
 
 ## Prompt Execution Conventions
-- Running temporary tests: After making required changes in files, run the temporary e2e test locally to verify the change
-- User testing: After running temporary successfully ask user to verify changes by themselves  
+MANDATORY — every change request must complete ALL steps in order:
+1. Analyze the request
+2. Make the required code changes
+3. Run a temporary e2e test locally to verify the change works until success
+4. According to plan after previous step passes, ask the user to verify the changes themselves
+5. According to plan add new unit and/or e2e tests
+6. According to plan update existing permanent tests
+7. Make sure that all permanent tests passed until success
 - Use 'ai-sandbox' folder for any temporary files created during the session
 - Use 'ai-results' folder for providing any files asked by user
