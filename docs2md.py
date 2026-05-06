@@ -291,6 +291,42 @@ def collect_files_in_directory(directory, config=None):
     return files
 
 
+def collect_standalone_md_files(directory, source_files):
+    """Collect .md files that have no paired source document in the directory.
+
+    A standalone .md file is one whose base name does not match any source file
+    (from the supported-extensions set) already present in *source_files*.
+
+    Args:
+        directory (str): Directory path to scan.
+        source_files (list): List of source filenames already collected for
+            pandoc conversion (used to detect paired .md outputs).
+
+    Returns:
+        list: Filenames of standalone .md files (basename only).
+    """
+    # Build set of base names that have a paired source file
+    paired_bases = {os.path.splitext(f)[0].lower() for f in source_files}
+
+    standalone = []
+    try:
+        for item in os.listdir(directory):
+            item_path = os.path.join(directory, item)
+            if not os.path.isfile(item_path):
+                continue
+            if os.path.splitext(item)[1].lower() != ".md":
+                continue
+            # Skip README.md — it is handled separately
+            if item.lower() == README_FILENAME.lower():
+                continue
+            base = os.path.splitext(item)[0].lower()
+            if base not in paired_bases:
+                standalone.append(item)
+    except Exception:
+        return []
+    return standalone
+
+
 def apply_masks(files, masks):
     """Apply regex masks to filter files"""
     if not masks:
@@ -774,6 +810,44 @@ def process_file(file, directory, force_generation, logger, config):
         return None, f"Skipped due to {skip_reason}"
 
 
+def process_standalone_md_file(file, directory, logger, config):
+    """Push a standalone .md file to git as-is (no pandoc conversion).
+
+    The file is pushed only when git_commit is enabled.  If git is disabled
+    the call is a no-op and returns (None, "Git disabled").
+
+    Args:
+        file (str): Filename of the .md file (basename only).
+        directory (str): Directory containing the file.
+        logger (logging.Logger): Logger instance.
+        config (dict): Configuration dictionary.
+
+    Returns:
+        tuple(bool|None|str, str):
+            (True,        "Pushed to git")           — file was committed
+            ("no_change", "git identical")            — content unchanged
+            (None,        "Git disabled")             — git_commit is False
+            (False,       "Error: <msg>")             — push failed
+    """
+    if not config.get("git_commit", False):
+        logger.debug(f"Standalone MD '{file}': git disabled, skipping push")
+        return None, "Git disabled"
+
+    file_path = os.path.join(directory, file)
+    logger.debug(f"Pushing standalone MD file to git: {file}")
+    try:
+        git_result = sync_to_git(file_path, config, logger)
+    except GitFatalError:
+        raise
+
+    if git_result is True:
+        return True, "Pushed to git"
+    elif git_result == "no_change":
+        return "no_change", "git identical"
+    else:
+        return False, "Error: git push failed"
+
+
 def process_directory(
     directory, config, logger, stats, important_logs=None, root_folder=None
 ):
@@ -874,6 +948,45 @@ def process_directory(
             dir_stats["skipped"] += 1
             stats["files_skipped"] += 1
             logger.debug(f'"{rel_file}" {message}')
+
+    # Collect and push standalone .md files (no paired source doc)
+    standalone_mds = collect_standalone_md_files(directory, files)
+    logger.debug(f"Standalone .md files: {standalone_mds}")
+
+    # Apply the same mask / README filtering to standalone .md files
+    if masks:
+        standalone_mds = apply_masks(standalone_mds, masks)
+        logger.debug(f"Standalone .md files after masks: {standalone_mds}")
+
+    standalone_mds = filter_files_by_readme(
+        standalone_mds, readme_content, bool(masks), logger, rel_dir=rel_dir
+    )
+    logger.debug(f"Standalone .md files after README filtering: {standalone_mds}")
+
+    for md_file in standalone_mds:
+        rel_file = (
+            os.path.join(rel_dir, md_file) if rel_dir and rel_dir != "." else md_file
+        )
+        success, message = process_standalone_md_file(
+            md_file, directory, logger, config
+        )
+
+        if success is True:
+            stats["files_committed"] += 1
+            logger.debug(f'"{rel_file}" {message}')
+            if important_logs is not None:
+                important_logs.append(f'"{rel_file}" {message}')
+        elif success == "no_change":
+            stats["files_git_identical"] += 1
+            logger.debug(f'"{rel_file}" {message}')
+        elif success is False:
+            stats["files_errors"] += 1
+            logger.info(f'"{rel_file}" {message}')
+            if important_logs is not None:
+                important_logs.append(f'ERROR: "{rel_file}" {message}')
+        else:
+            # git disabled — silent skip
+            logger.debug(f'"{rel_file}" standalone MD: {message}')
 
     if files:
         logger.debug(
@@ -982,13 +1095,15 @@ def main():
 
         # Show summary of results - kept as INFO per requirements
         logger.info("")
-        logger.info("SUMMARY:")
+        logger.info("PROCEED:")
         logger.info(f"Directories processed: {stats['dirs_processed']}")
         logger.info(f"Directories skipped: {stats['dirs_skipped']}")
         logger.info(f"Files generated: {stats['files_generated']}")
         logger.info(f"Files commited to git: {stats['files_committed']}")
         logger.info(f"Files skipped as actual: {stats['files_skipped']}")
-        logger.info(f"Files skipped as identical to git: {stats['files_git_identical']}")
+        logger.info(
+            f"Files skipped as identical to git: {stats['files_git_identical']}"
+        )
         logger.info(f"Files with errors: {stats['files_errors']}")
 
         # Show important logs in summary

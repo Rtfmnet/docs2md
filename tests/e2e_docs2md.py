@@ -427,6 +427,62 @@ class TestIntegrationDocs2md(unittest.TestCase):
         # tearDown should still clean up
         self.assertTrue(True)
 
+    def test_standalone_md_collected_when_git_disabled(self):
+        """Standalone .md files are collected; with git disabled they are silently skipped (no error)"""
+        test_dir = os.path.join(self.test_data_dir, "standalone_md_test")
+        os.makedirs(test_dir)
+
+        # README references both the source and the standalone .md
+        self.create_readme(
+            test_dir,
+            "# Documentation\ndoc2md#aikb\nsource.html\nnotes.md",
+        )
+        # Source doc — will be pandoc-converted
+        self.create_test_file(
+            test_dir, "source.html", "<html><body>Source</body></html>"
+        )
+        # Standalone .md — no paired source doc
+        self.create_test_file(
+            test_dir, "notes.md", "# Notes\nSome standalone content.\n"
+        )
+
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_committed": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+            "files_git_identical": 0,
+        }
+
+        docs2md.process_directory(test_dir, self.config, self.logger, stats)
+
+        # source.html should have been converted (generated or error if pandoc missing)
+        self.assertGreater(stats["files_generated"] + stats["files_errors"], 0)
+        # No errors from the standalone .md itself (git is disabled → silent skip)
+        # Verify collect_standalone_md_files correctly identifies notes.md
+        source_files = docs2md.collect_files_in_directory(test_dir, self.config)
+        standalone = docs2md.collect_standalone_md_files(test_dir, source_files)
+        self.assertIn("notes.md", standalone)
+        self.assertNotIn("source.md", standalone)  # pandoc output, not standalone
+        self.assertNotIn("README.md", standalone)
+
+    def test_standalone_md_paired_excluded(self):
+        """An .md file whose base name matches a source doc is not treated as standalone"""
+        test_dir = os.path.join(self.test_data_dir, "paired_md_test")
+        os.makedirs(test_dir)
+
+        self.create_test_file(test_dir, "report.docx", "Fake docx content")
+        self.create_test_file(test_dir, "report.md", "# Generated output")
+        self.create_test_file(test_dir, "standalone.md", "# Standalone")
+
+        source_files = docs2md.collect_files_in_directory(test_dir, self.config)
+        standalone = docs2md.collect_standalone_md_files(test_dir, source_files)
+
+        self.assertIn("standalone.md", standalone)
+        self.assertNotIn("report.md", standalone)
+
 
 if __name__ == "__main__":
     unittest.main()

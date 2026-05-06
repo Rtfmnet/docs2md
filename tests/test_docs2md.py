@@ -329,6 +329,23 @@ class TestFileSelection(unittest.TestCase):
     def test_is_source_newer_false(self, *_):
         self.assertFalse(docs2md.is_source_newer("/src", "/dst"))
 
+    @patch(
+        "os.listdir",
+        return_value=["notes.md", "report.docx", "report.md", "README.md"],
+    )
+    @patch("os.path.isfile", return_value=True)
+    def test_collect_standalone_md_excludes_paired_and_readme(self, *_):
+        """notes.md is standalone; report.md is paired with report.docx; README.md always excluded"""
+        source_files = ["report.docx"]
+        standalone = docs2md.collect_standalone_md_files("/dir", source_files)
+        self.assertIn("notes.md", standalone)
+        self.assertNotIn("report.md", standalone)
+        self.assertNotIn("README.md", standalone)
+
+    @patch("os.listdir", side_effect=Exception("denied"))
+    def test_collect_standalone_md_error_returns_empty(self, *_):
+        self.assertEqual(docs2md.collect_standalone_md_files("/dir", []), [])
+
 
 # ---------------------------------------------------------------------------
 # 4. Conversion (convert_to_markdown + process_file)
@@ -422,6 +439,56 @@ class TestConversion(unittest.TestCase):
             "test.docx", "/dir", True, self.logger, self.config
         )
         self.assertTrue(ok)
+
+
+class TestProcessStandaloneMdFile(unittest.TestCase):
+    """process_standalone_md_file — all outcomes"""
+
+    def setUp(self):
+        self.logger = Mock()
+
+    def test_returns_none_when_git_disabled(self):
+        config = _make_config(git_commit=False)
+        result, msg = docs2md.process_standalone_md_file(
+            "notes.md", "/dir", self.logger, config
+        )
+        self.assertIsNone(result)
+        self.assertIn("Git disabled", msg)
+
+    def test_pushed_to_git_returns_true(self):
+        config = _make_git_config()
+        with patch("docs2md.sync_to_git", return_value=True):
+            result, msg = docs2md.process_standalone_md_file(
+                "notes.md", "/dir", self.logger, config
+            )
+        self.assertTrue(result)
+        self.assertIn("Pushed to git", msg)
+
+    def test_no_change_returns_no_change(self):
+        config = _make_git_config()
+        with patch("docs2md.sync_to_git", return_value="no_change"):
+            result, msg = docs2md.process_standalone_md_file(
+                "notes.md", "/dir", self.logger, config
+            )
+        self.assertEqual(result, "no_change")
+        self.assertIn("git identical", msg)
+
+    def test_push_failure_returns_false(self):
+        config = _make_git_config()
+        with patch("docs2md.sync_to_git", return_value=False):
+            result, msg = docs2md.process_standalone_md_file(
+                "notes.md", "/dir", self.logger, config
+            )
+        self.assertFalse(result)
+        self.assertIn("Error", msg)
+
+    def test_git_fatal_error_propagates(self):
+        config = _make_git_config()
+        with patch("docs2md.sync_to_git", side_effect=docs2md.GitFatalError("auth")):
+            with self.assertRaises(docs2md.GitFatalError):
+                docs2md.process_standalone_md_file(
+                    "notes.md", "/dir", self.logger, config
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +600,44 @@ class TestProcessDirectory(unittest.TestCase):
         processed = [c.args[0] for c in mock_pf.call_args_list]
         self.assertIn("keep.docx", processed)
         self.assertNotIn("drop.docx", processed)
+
+    def test_standalone_md_pushed_to_git(self):
+        """process_directory calls process_standalone_md_file for standalone .md files"""
+        readme = f"{docs2md.TAG_AIKB}\nnotes.md standalone file"
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+            patch("docs2md.collect_standalone_md_files", return_value=["notes.md"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+            patch(
+                "docs2md.process_standalone_md_file",
+                return_value=(True, "Pushed to git"),
+            ) as mock_push,
+        ):
+            docs2md.process_directory(
+                "/root", self.config, self.logger, self.stats, root_folder="/root"
+            )
+        mock_push.assert_called_once_with("notes.md", "/root", self.logger, self.config)
+        self.assertEqual(self.stats["files_committed"], 1)
+
+    def test_standalone_md_not_referenced_skipped(self):
+        """A standalone .md not referenced in README (no mask) is not pushed"""
+        readme = f"{docs2md.TAG_AIKB}\nno reference to any md file"
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.read_readme", return_value=readme),
+            patch("docs2md.sync_readme_to_git", return_value=False),
+            patch("docs2md.collect_files_in_directory", return_value=[]),
+            patch("docs2md.collect_standalone_md_files", return_value=["orphan.md"]),
+            patch("docs2md.process_file", return_value=(True, "MD generated")),
+            patch("docs2md.process_standalone_md_file") as mock_push,
+        ):
+            docs2md.process_directory(
+                "/root", self.config, self.logger, self.stats, root_folder="/root"
+            )
+        mock_push.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -897,9 +1002,14 @@ class TestMain(unittest.TestCase):
         )
         mock_exit.assert_called_with(1)
 
-    def test_summary_logged(self):
+    def test_proceed_logged(self):
         captured, _, _ = self._run_main()
-        self.assertIn("SUMMARY:", captured)
+        self.assertIn("PROCEED:", captured)
+
+    def test_summary_label_is_proceed(self):
+        captured, _, _ = self._run_main()
+        self.assertNotIn("SUMMARY:", captured)
+        self.assertIn("PROCEED:", captured)
 
     def test_change_log_shown_when_important_logs_present(self):
         def add_log(*args, **kwargs):
