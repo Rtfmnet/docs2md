@@ -17,8 +17,6 @@ Config-driven — no CLI arguments, only `docs2md.yaml`.
 
 ## Configuration (`docs2md.yaml`)
 
-Supports two formats:
-
 Set `active_project` to switch between named project sections:
 
 ```yaml
@@ -61,7 +59,7 @@ common:
 | GitHub | `https://github.com/<owner>/<repo>/tree/<branch>[/<path>]` |
 | Azure DevOps | `https://dev.azure.com/<org>/<project>/_git/<repo>` |
 
-## Key Tags (in directory `README.md` files)
+## Directory Tags (in `README.md` files)
 
 Tags are placed in `README.md` files inside each directory to control processing.
 
@@ -94,38 +92,15 @@ Override with `common.supported_extensions` in config.
 ## Project Structure
 
 ```
-docs2md.py        — main application (config loading, processing pipeline)
-git_sync.py       — GitManager class (GitLab, GitHub, Azure DevOps push via REST API)
+docs2md.py        — main entry point: config loading, directory traversal, processing pipeline
+git_sync.py       — GitManager: push files to GitLab, GitHub, or Azure DevOps via REST API
 docs2md.yaml      — configuration file
 .env              — GIT_ACCESS_TOKEN (not committed)
 tests/
   test_docs2md.py     — unit tests for docs2md.py
   test_git_sync.py    — unit tests for git_sync.py
-  e2e_docs2md.py      — integration tests (require pandoc installed)
-samples/          — standalone utility scripts (not part of main pipeline)
-  merge_md.py         — merge multiple .md files into one
-  batch_docx2md.py    — bulk docx converter
-  whisper2txt.py      — Whisper transcript sanitizer
-  fixmd.py            — Markdown fixer/sanitizer
-  codemie/            — Codemie agent demo scripts
-```
-
-## Running Tests
-
-```bash
-# All tests
-python -m pytest tests/
-
-# Unit tests only
-python -m pytest tests/test_docs2md.py
-python -m pytest tests/test_git_sync.py
-
-# Integration tests (requires pandoc)
-python -m pytest tests/e2e_docs2md.py
-
-# Single test class or method
-python -m pytest tests/test_docs2md.py::TestConvertToMarkdown
-python -m pytest tests/test_docs2md.py::TestConvertToMarkdown::test_convert_success
+  test_merge_md.py    — unit tests for merge_md
+  e2e_docs2md.py      — integration tests (require pandoc)
 ```
 
 ## Dependencies
