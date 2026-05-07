@@ -45,5 +45,5 @@ MANDATORY — complete ALL steps in order for every change request:
 7. Run all permanent tests (`python -m pytest tests/`) and fix failures until fully green
 
 ## Working Folders
-- `ai-sandbox/` — temporary files created during the session (not committed)
-- `ai-results/` — output files explicitly requested by the user (not committed)
+- @ai-sandbox — temporary files created during the session (not committed)
+- @ai-results — output files explicitly requested by the user (not committed)
