@@ -1095,7 +1095,7 @@ def main():
 
         # Show summary of results - kept as INFO per requirements
         logger.info("")
-        logger.info("PROCEED:")
+        logger.info("SUMMARY:")
         logger.info(f"Directories processed: {stats['dirs_processed']}")
         logger.info(f"Directories skipped: {stats['dirs_skipped']}")
         logger.info(f"Files generated: {stats['files_generated']}")

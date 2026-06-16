@@ -16,9 +16,15 @@ New: collect and push them to git as-is, no pandoc conversion.
 CR3. README.md masks and file references can't be used together:
 Current: If a README uses doc2md#mask= tags, only files matching the mask are kept — explicitly referenced files are ignored unless they also match the mask.
 New: Support both filtering modes simultaneously — a file should be included if it matches a mask OR is explicitly referenced in the README.
+
 CR4. Handle locally deleted files that still exist in git:
 Current: If a file is deleted locally but still exists in the remote repo, the tool does nothing — the stale file remains in git indefinitely.
 New: Detect such files and define the correct action (e.g. delete from git, warn the user, or skip with a log entry).
+
+CR5. Fore Clean Git config param
+Current: noi such a param
+New: if user add a new param to config file 'force_clean_git' and connection to Git wors and param: true the tool delete all files from the active project git url before process local files.
+Default value if false.
 
 # TechDept
 TD1. Split test data into categories:
