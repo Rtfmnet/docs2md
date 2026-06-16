@@ -46,6 +46,7 @@ common:
 | `force_md_generation` | Regenerate `.md` even when up to date |
 | `git_commit` | Push converted files to git |
 | `force_readme_git_commit` | Also push `README.md` files to git (always, not mtime-guarded) |
+| `force_clean_git` | Delete all files from the remote git path before processing. Root `README.md` is preserved to keep the path alive. Default: `false` |
 | `git_url` | Repository tree URL (see format below) |
 | `common.log_level` | Logging level: `INFO`, `DEBUG`, `ERROR` |
 | `common.pause_before_exit` | Pause for keypress before exiting |

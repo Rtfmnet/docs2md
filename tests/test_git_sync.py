@@ -989,5 +989,190 @@ class TestGetLastCommitTime(unittest.TestCase):
         self.assertIn("error", details)
 
 
+class TestGitManagerCleanGit(unittest.TestCase):
+    """Test list_files() and delete_file() across all three providers."""
+
+    # ------------------------------------------------------------------ #
+    # list_files — GitLab
+    # ------------------------------------------------------------------ #
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_list_files_gitlab_returns_file_list(self, mock_get, mock_init):
+        """list_files on GitLab returns blob paths relative to subdir."""
+        mock_init.return_value = None
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {"type": "blob", "path": "doc2md-tests/README.md"},
+            {"type": "blob", "path": "doc2md-tests/report.md"},
+            {"type": "tree", "path": "doc2md-tests/sub"},  # should be excluded
+        ]
+        mock_get.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.list_files(
+            "https://gitbud.epam.com/project/repo/-/tree/main/doc2md-tests"
+        )
+
+        self.assertTrue(success)
+        files = details["files"]
+        self.assertIn("README.md", files)
+        self.assertIn("report.md", files)
+        # tree entries must NOT appear
+        self.assertFalse(any("tree" in f for f in files))
+
+    # ------------------------------------------------------------------ #
+    # list_files — GitHub
+    # ------------------------------------------------------------------ #
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.get")
+    def test_list_files_github_returns_file_list(self, mock_get, mock_init):
+        """list_files on GitHub returns blob paths relative to subdir."""
+        mock_init.return_value = None
+
+        # First GET: branch lookup
+        mock_branch_response = Mock()
+        mock_branch_response.status_code = 200
+        mock_branch_response.json.return_value = {
+            "commit": {"commit": {"tree": {"sha": "abc123"}}}
+        }
+
+        # Second GET: tree
+        mock_tree_response = Mock()
+        mock_tree_response.status_code = 200
+        mock_tree_response.json.return_value = {
+            "tree": [
+                {"type": "blob", "path": "doc2md/README.md"},
+                {"type": "blob", "path": "doc2md/notes.md"},
+                {"type": "tree", "path": "doc2md/subdir"},  # excluded
+                {"type": "blob", "path": "other/file.md"},  # outside subdir, excluded
+            ]
+        }
+        mock_get.side_effect = [mock_branch_response, mock_tree_response]
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.list_files(
+            "https://github.com/owner/repo/tree/main/doc2md"
+        )
+
+        self.assertTrue(success)
+        files = details["files"]
+        self.assertIn("README.md", files)
+        self.assertIn("notes.md", files)
+        # Files outside the subdir must NOT appear
+        self.assertNotIn("other/file.md", files)
+
+    # ------------------------------------------------------------------ #
+    # delete_file — GitLab
+    # ------------------------------------------------------------------ #
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.delete")
+    def test_delete_file_gitlab_success(self, mock_delete, mock_init):
+        """delete_file on GitLab calls DELETE and returns success."""
+        mock_init.return_value = None
+
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_delete.return_value = mock_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.delete_file(
+            "report.md",
+            "https://gitbud.epam.com/project/repo/-/tree/main/doc2md-tests",
+            "doc2md#clean",
+        )
+
+        self.assertTrue(success)
+        self.assertTrue(mock_delete.called)
+        # Commit message must appear in the DELETE payload
+        _, kwargs = mock_delete.call_args
+        self.assertEqual(kwargs["json"]["commit_message"], "doc2md#clean")
+
+    # ------------------------------------------------------------------ #
+    # delete_file — GitHub (requires SHA)
+    # ------------------------------------------------------------------ #
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.delete")
+    @patch("requests.get")
+    def test_delete_file_github_uses_sha(self, mock_get, mock_delete, mock_init):
+        """delete_file on GitHub fetches SHA then passes it to the DELETE call."""
+        mock_init.return_value = None
+
+        # GET: file exists, returns SHA
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.json.return_value = {"sha": "deadbeef"}
+        mock_get.return_value = mock_get_response
+
+        mock_del_response = Mock()
+        mock_del_response.status_code = 200
+        mock_delete.return_value = mock_del_response
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.delete_file(
+            "report.md",
+            "https://github.com/owner/repo/tree/main/doc2md",
+            "doc2md#clean",
+        )
+
+        self.assertTrue(success)
+        # SHA must be in the DELETE payload
+        _, kwargs = mock_delete.call_args
+        self.assertEqual(kwargs["json"]["sha"], "deadbeef")
+
+    # ------------------------------------------------------------------ #
+    # delete_file — Azure DevOps (changeType: "delete")
+    # ------------------------------------------------------------------ #
+
+    @patch.object(GitManager, "__init__")
+    @patch("requests.post")
+    @patch("requests.get")
+    def test_delete_file_azure_uses_delete_change_type(
+        self, mock_get, mock_post, mock_init
+    ):
+        """delete_file on Azure DevOps pushes with changeType 'delete'."""
+        mock_init.return_value = None
+
+        # GET refs: branch found
+        mock_refs = Mock()
+        mock_refs.status_code = 200
+        mock_refs.json.return_value = {
+            "value": [{"objectId": "oldsha001", "name": "refs/heads/main"}]
+        }
+        mock_get.return_value = mock_refs
+
+        mock_push = Mock()
+        mock_push.status_code = 201
+        mock_push.json.return_value = {}
+        mock_post.return_value = mock_push
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.delete_file(
+            "report.md",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain",
+            "doc2md#clean",
+        )
+
+        self.assertTrue(success)
+        _, kwargs = mock_post.call_args
+        change_type = kwargs["json"]["commits"][0]["changes"][0]["changeType"]
+        self.assertEqual(change_type, "delete")
+
+
 if __name__ == "__main__":
     unittest.main()

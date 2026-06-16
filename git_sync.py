@@ -151,6 +151,56 @@ class GitManager:
             return self._verify_path_azure(git_url)
         return self._verify_path_gitlab(git_url)
 
+    def list_files(self, git_url):
+        """
+        List all files (blobs only) under the given git path.
+
+        Returns paths relative to the subdir configured in git_url,
+        e.g. ["README.md", "subdir/report.md"].
+
+        Args:
+            git_url (str): URL to git repository tree.
+
+        Returns:
+            tuple: (success, details) where details["files"] is a list of
+                   relative file path strings on success, or details["error"]
+                   on failure.
+        """
+        try:
+            provider = self._detect_provider(git_url)
+        except ValueError as e:
+            return False, {"error": str(e)}
+
+        if provider == self.PROVIDER_GITHUB:
+            return self._list_files_github(git_url)
+        if provider == self.PROVIDER_AZURE:
+            return self._list_files_azure(git_url)
+        return self._list_files_gitlab(git_url)
+
+    def delete_file(self, relative_file_path, git_url, commit_message):
+        """
+        Delete a single file from the remote git repository.
+
+        Args:
+            relative_file_path (str): File path relative to the subdir in git_url
+                (e.g. "report.md" or "subdir/report.md").
+            git_url (str): URL to git repository tree.
+            commit_message (str): Commit message for the deletion.
+
+        Returns:
+            tuple: (success, details) where success is bool and details is a dict.
+        """
+        try:
+            provider = self._detect_provider(git_url)
+        except ValueError as e:
+            return False, {"error": str(e)}
+
+        if provider == self.PROVIDER_GITHUB:
+            return self._delete_file_github(relative_file_path, git_url, commit_message)
+        if provider == self.PROVIDER_AZURE:
+            return self._delete_file_azure(relative_file_path, git_url, commit_message)
+        return self._delete_file_gitlab(relative_file_path, git_url, commit_message)
+
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
@@ -393,6 +443,98 @@ class GitManager:
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
 
+    def _list_files_gitlab(self, git_url):
+        """List all blob files under the GitLab subdir using the Repository Tree API (recursive)."""
+        try:
+            parts = self._parse_gitlab_url(git_url)
+            hostname = parts["hostname"]
+            project_path = parts["project_path"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            encoded_project_path = urllib.parse.quote(project_path, safe="")
+            headers = {"PRIVATE-TOKEN": self.token}
+            tree_url = (
+                f"https://{hostname}/api/v4/projects/{encoded_project_path}"
+                f"/repository/tree"
+            )
+            params = {"ref": branch, "recursive": "true", "per_page": 100}
+            if subdir_path:
+                params["path"] = subdir_path
+
+            # Paginate through all results
+            all_items = []
+            page = 1
+            while True:
+                params["page"] = page
+                response = requests.get(tree_url, headers=headers, params=params)
+                if response.status_code != 200:
+                    return False, {
+                        "error": f"GitLab tree API failed: {response.status_code} - {response.text}"
+                    }
+                items = response.json()
+                if not items:
+                    break
+                all_items.extend(items)
+                if len(items) < 100:
+                    break
+                page += 1
+
+            # Keep only blobs; strip the subdir prefix to get relative paths
+            prefix = (subdir_path.rstrip("/") + "/") if subdir_path else ""
+            files = []
+            for item in all_items:
+                if item.get("type") != "blob":
+                    continue
+                full_path = item.get("path", "")
+                rel_path = (
+                    full_path[len(prefix) :]
+                    if full_path.startswith(prefix)
+                    else full_path
+                )
+                files.append(rel_path)
+
+            return True, {"files": files, "branch": branch}
+
+        except Exception as e:
+            return False, {"error": f"list_files failed: {str(e)}"}
+
+    def _delete_file_gitlab(self, relative_file_path, git_url, commit_message):
+        """Delete a file from GitLab using the Repository Files API."""
+        try:
+            parts = self._parse_gitlab_url(git_url)
+            hostname = parts["hostname"]
+            project_path = parts["project_path"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            encoded_project_path = urllib.parse.quote(project_path, safe="")
+            headers = {"PRIVATE-TOKEN": self.token, "Content-Type": "application/json"}
+
+            # Build the full repo-relative path
+            rel = relative_file_path.lstrip("/")
+            full_path = f"{subdir_path}/{rel}" if subdir_path else rel
+            full_path = full_path.replace("//", "/")
+
+            files_api_url = (
+                f"https://{hostname}/api/v4/projects/{encoded_project_path}"
+                f"/repository/files/{urllib.parse.quote(full_path, safe='')}"
+            )
+            payload = {"branch": branch, "commit_message": commit_message}
+            response = requests.delete(files_api_url, headers=headers, json=payload)
+
+            if response.status_code in [200, 204]:
+                return True, {
+                    "message": f"File deleted: {full_path}",
+                    "file_path": full_path,
+                }
+            return False, {
+                "error": f"GitLab delete failed: {response.status_code} - {response.text}"
+            }
+
+        except Exception as e:
+            return False, {"error": f"delete_file failed: {str(e)}"}
+
     # ------------------------------------------------------------------
     # GitHub implementation
     # ------------------------------------------------------------------
@@ -615,6 +757,98 @@ class GitManager:
 
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
+
+    def _list_files_github(self, git_url):
+        """List all blob files under the GitHub subdir using the Git Trees API (recursive)."""
+        try:
+            parts = self._parse_github_url(git_url)
+            owner = parts["owner"]
+            repo = parts["repo"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            headers = self._github_headers()
+
+            # Resolve the branch to its tree SHA
+            branch_url = f"https://api.github.com/repos/{owner}/{repo}/branches/{urllib.parse.quote(branch)}"
+            branch_response = requests.get(branch_url, headers=headers)
+            if branch_response.status_code != 200:
+                return False, {
+                    "error": f"GitHub branch lookup failed: {branch_response.status_code} - {branch_response.text}"
+                }
+            tree_sha = branch_response.json()["commit"]["commit"]["tree"]["sha"]
+
+            # Fetch full tree recursively
+            tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
+            tree_response = requests.get(tree_url, headers=headers)
+            if tree_response.status_code != 200:
+                return False, {
+                    "error": f"GitHub tree API failed: {tree_response.status_code} - {tree_response.text}"
+                }
+
+            prefix = (subdir_path.rstrip("/") + "/") if subdir_path else ""
+            files = []
+            for item in tree_response.json().get("tree", []):
+                if item.get("type") != "blob":
+                    continue
+                full_path = item.get("path", "")
+                if prefix and not full_path.startswith(prefix):
+                    continue
+                rel_path = full_path[len(prefix) :] if prefix else full_path
+                files.append(rel_path)
+
+            return True, {"files": files, "branch": branch}
+
+        except Exception as e:
+            return False, {"error": f"list_files failed: {str(e)}"}
+
+    def _delete_file_github(self, relative_file_path, git_url, commit_message):
+        """Delete a file from GitHub using the Contents API (requires SHA)."""
+        try:
+            parts = self._parse_github_url(git_url)
+            owner = parts["owner"]
+            repo = parts["repo"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            headers = self._github_headers()
+
+            rel = relative_file_path.lstrip("/")
+            full_path = f"{subdir_path}/{rel}" if subdir_path else rel
+            full_path = full_path.replace("//", "/")
+
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{urllib.parse.quote(full_path, safe='/')}"
+
+            # GET current SHA (required for deletion)
+            check_response = requests.get(
+                api_url, headers=headers, params={"ref": branch}
+            )
+            if check_response.status_code != 200:
+                return False, {
+                    "error": f"GitHub file SHA lookup failed: {check_response.status_code} - {check_response.text}"
+                }
+            sha = check_response.json().get("sha")
+            if not sha:
+                return False, {"error": "GitHub file SHA not found in response"}
+
+            payload = {
+                "message": commit_message,
+                "sha": sha,
+                "branch": branch,
+            }
+            response = requests.delete(api_url, headers=headers, json=payload)
+
+            if response.status_code in [200, 204]:
+                return True, {
+                    "message": f"File deleted: {full_path}",
+                    "file_path": full_path,
+                }
+            return False, {
+                "error": f"GitHub delete failed: {response.status_code} - {response.text}"
+            }
+
+        except Exception as e:
+            return False, {"error": f"delete_file failed: {str(e)}"}
 
     # ------------------------------------------------------------------
     # Azure DevOps implementation
@@ -907,6 +1141,116 @@ class GitManager:
 
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
+
+    def _list_files_azure(self, git_url):
+        """List all blob files under the Azure DevOps subdir using the Items API (recursive)."""
+        try:
+            parts = self._parse_azure_url(git_url)
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+            base_url = parts["base_url"]
+            api_version = "7.0"
+
+            headers = self._azure_headers()
+            path_param = f"/{subdir_path}" if subdir_path else "/"
+
+            items_url = (
+                f"{base_url}/items"
+                f"?path={urllib.parse.quote(path_param)}"
+                f"&recursionLevel=Full"
+                f"&versionDescriptor.versionType=branch"
+                f"&versionDescriptor.version={urllib.parse.quote(branch)}"
+                f"&api-version={api_version}"
+            )
+            response = requests.get(items_url, headers=headers)
+            if response.status_code != 200:
+                return False, {
+                    "error": f"Azure items API failed: {response.status_code} - {response.text}"
+                }
+
+            prefix = ("/" + subdir_path.strip("/") + "/") if subdir_path else "/"
+            files = []
+            for item in response.json().get("value", []):
+                if item.get("gitObjectType") != "blob":
+                    continue
+                full_path = item.get("path", "")
+                # Strip leading slash and subdir prefix to get relative path
+                if subdir_path:
+                    strip = "/" + subdir_path.strip("/") + "/"
+                    rel_path = (
+                        full_path[len(strip) :]
+                        if full_path.startswith(strip)
+                        else full_path.lstrip("/")
+                    )
+                else:
+                    rel_path = full_path.lstrip("/")
+                files.append(rel_path)
+
+            return True, {"files": files, "branch": branch}
+
+        except Exception as e:
+            return False, {"error": f"list_files failed: {str(e)}"}
+
+    def _delete_file_azure(self, relative_file_path, git_url, commit_message):
+        """Delete a file from Azure DevOps using the Git Push API with changeType 'delete'."""
+        try:
+            parts = self._parse_azure_url(git_url)
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+            base_url = parts["base_url"]
+            api_version = "7.0"
+
+            headers = self._azure_headers()
+
+            rel = relative_file_path.lstrip("/")
+            if subdir_path:
+                target_path = f"/{subdir_path.strip('/')}/{rel}"
+            else:
+                target_path = f"/{rel}"
+            target_path = target_path.replace("//", "/")
+
+            # Get the latest commit SHA on the branch
+            refs_url = f"{base_url}/refs?filter=heads/{urllib.parse.quote(branch)}&api-version={api_version}"
+            refs_response = requests.get(refs_url, headers=headers)
+            if refs_response.status_code != 200:
+                return False, {
+                    "error": f"Azure refs lookup failed: {refs_response.status_code} - {refs_response.text}"
+                }
+            refs_data = refs_response.json()
+            if not refs_data.get("value"):
+                return False, {"error": f"Branch '{branch}' not found"}
+            old_object_id = refs_data["value"][0]["objectId"]
+
+            push_payload = {
+                "refUpdates": [
+                    {"name": f"refs/heads/{branch}", "oldObjectId": old_object_id}
+                ],
+                "commits": [
+                    {
+                        "comment": commit_message,
+                        "changes": [
+                            {
+                                "changeType": "delete",
+                                "item": {"path": target_path},
+                            }
+                        ],
+                    }
+                ],
+            }
+            push_url = f"{base_url}/pushes?api-version={api_version}"
+            response = requests.post(push_url, headers=headers, json=push_payload)
+
+            if response.status_code in [200, 201]:
+                return True, {
+                    "message": f"File deleted: {target_path}",
+                    "file_path": target_path,
+                }
+            return False, {
+                "error": f"Azure delete failed: {response.status_code} - {response.text}"
+            }
+
+        except Exception as e:
+            return False, {"error": f"delete_file failed: {str(e)}"}
 
 
 if __name__ == "__main__":

@@ -1004,12 +1004,12 @@ class TestMain(unittest.TestCase):
 
     def test_proceed_logged(self):
         captured, _, _ = self._run_main()
-        self.assertIn("PROCEED:", captured)
+        self.assertIn("SUMMARY:", captured)
 
     def test_summary_label_is_proceed(self):
         captured, _, _ = self._run_main()
-        self.assertNotIn("SUMMARY:", captured)
-        self.assertIn("PROCEED:", captured)
+        self.assertIn("SUMMARY:", captured)
+        self.assertNotIn("PROCEED:", captured)
 
     def test_change_log_shown_when_important_logs_present(self):
         def add_log(*args, **kwargs):
@@ -1018,6 +1018,278 @@ class TestMain(unittest.TestCase):
 
         captured, _, _ = self._run_main(process_side_effect=add_log)
         self.assertIn("Change log:", captured)
+
+
+# ---------------------------------------------------------------------------
+# 9. force_clean_git (clean_git_remote + main() wiring)
+# ---------------------------------------------------------------------------
+
+
+class TestForceCleanGit(unittest.TestCase):
+    """clean_git_remote logic and force_clean_git config key wiring in main()."""
+
+    def setUp(self):
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        self.logger = Mock()
+
+    # --- clean_git_remote ---
+
+    def test_clean_git_remote_deletes_all_files_including_readmes(self):
+        """clean_git_remote deletes ALL files including README.md; preserves root .gitkeep."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["README.md", "report.md", "subdir/README.md", "subdir/doc.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        docs2md.clean_git_remote(
+            "https://gitbud.epam.com/proj/-/tree/main/docs",
+            mock_gm,
+            self.logger,
+        )
+
+        # Every file deleted — no .gitkeep in remote so it must be pushed
+        self.assertEqual(mock_gm.delete_file.call_count, 4)
+        deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
+        self.assertIn("README.md", deleted)
+        self.assertIn("subdir/README.md", deleted)
+        self.assertIn("report.md", deleted)
+        self.assertIn("subdir/doc.md", deleted)
+        mock_gm.push_commit_file.assert_called_once()
+
+    def test_clean_git_remote_skips_push_when_gitkeep_exists(self):
+        """clean_git_remote does NOT push .gitkeep when it already exists in remote."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": [".gitkeep", "README.md", "report.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        docs2md.clean_git_remote(
+            "https://gitbud.epam.com/proj/-/tree/main/docs",
+            mock_gm,
+            self.logger,
+        )
+
+        # .gitkeep must NOT be deleted
+        deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
+        self.assertNotIn(".gitkeep", deleted)
+        self.assertEqual(mock_gm.delete_file.call_count, 2)
+        # .gitkeep already exists — no push needed
+        mock_gm.push_commit_file.assert_not_called()
+
+    def test_clean_git_remote_pushes_gitkeep_after_delete(self):
+        """.gitkeep is pushed to the remote root after all files are deleted."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (True, {"files": ["README.md", "report.md"]})
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        docs2md.clean_git_remote(
+            "https://gitbud.epam.com/proj/-/tree/main/docs",
+            mock_gm,
+            self.logger,
+        )
+
+        mock_gm.push_commit_file.assert_called_once()
+        pushed_file = mock_gm.push_commit_file.call_args.args[0]
+        self.assertTrue(
+            os.path.basename(pushed_file) == docs2md.GITKEEP_FILENAME,
+            f"Expected .gitkeep to be pushed, got: {pushed_file}",
+        )
+
+    def test_clean_git_remote_raises_on_list_failure(self):
+        """clean_git_remote raises GitFatalError when list_files fails."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (False, {"error": "API timeout"})
+
+        with self.assertRaises(docs2md.GitFatalError) as ctx:
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+            )
+        self.assertIn("API timeout", str(ctx.exception))
+
+    def test_clean_git_remote_raises_when_gitkeep_push_fails(self):
+        """clean_git_remote raises GitFatalError when .gitkeep push fails."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (True, {"files": []})
+        mock_gm.push_commit_file.return_value = (False, {"error": "403 Forbidden"})
+
+        with self.assertRaises(docs2md.GitFatalError) as ctx:
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+            )
+        self.assertIn("403 Forbidden", str(ctx.exception))
+
+    # --- main() wiring ---
+
+    def _run_main_with_config(self, config):
+        mock_logger = Mock()
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+            patch("sys.exit"),
+        ):
+            return mock_logger
+
+    def test_force_clean_git_triggers_clean_before_processing(self):
+        """force_clean_git: true + all required flags set calls list_files and pushes .gitkeep."""
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = {
+            "root_folder": "/root",
+            "git_commit": True,
+            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
+            "force_clean_git": True,
+            "force_md_generation": True,
+            "force_readme_git_commit": True,
+            "common": {},
+        }
+        mock_gm = Mock()
+        mock_gm.verify_path.return_value = (True, {"contents_count": 1})
+        mock_gm.list_files.return_value = (True, {"files": []})
+        mock_gm.delete_file.return_value = (True, {"message": "ok"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=Mock()),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.GitManager", return_value=mock_gm),
+            patch("docs2md.process_directories_recursively"),
+            patch("sys.exit"),
+        ):
+            docs2md.main()
+
+        mock_gm.list_files.assert_called_once()
+        # .gitkeep must be pushed to keep remote path alive
+        mock_gm.push_commit_file.assert_called_once()
+        pushed_file = mock_gm.push_commit_file.call_args.args[0]
+        self.assertTrue(os.path.basename(pushed_file) == docs2md.GITKEEP_FILENAME)
+
+    def test_force_clean_git_without_force_md_generation_exits(self):
+        """force_clean_git: true + force_md_generation: false must exit with error."""
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = {
+            "root_folder": "/root",
+            "git_commit": True,
+            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
+            "force_clean_git": True,
+            "force_md_generation": False,
+            "common": {},
+        }
+        mock_logger = Mock()
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.clean_git_remote") as mock_clean,
+            patch("sys.exit") as mock_exit,
+        ):
+            docs2md.main()
+
+        mock_exit.assert_called_with(1)
+        mock_clean.assert_not_called()
+        error_text = " ".join(str(c) for c in mock_logger.error.call_args_list)
+        self.assertIn("force_md_generation", error_text)
+
+    def test_force_clean_git_without_force_readme_git_commit_exits(self):
+        """force_clean_git: true + force_readme_git_commit: false must exit with error."""
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+        config = {
+            "root_folder": "/root",
+            "git_commit": True,
+            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
+            "force_clean_git": True,
+            "force_md_generation": True,
+            "force_readme_git_commit": False,
+            "common": {},
+        }
+        mock_logger = Mock()
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.clean_git_remote") as mock_clean,
+            patch("sys.exit") as mock_exit,
+        ):
+            docs2md.main()
+
+        mock_exit.assert_called_with(1)
+        mock_clean.assert_not_called()
+        error_text = " ".join(str(c) for c in mock_logger.error.call_args_list)
+        self.assertIn("force_readme_git_commit", error_text)
+
+    def test_force_clean_git_false_skips_clean(self):
+        """force_clean_git: false (default) must NOT call clean_git_remote."""
+        config = {
+            "root_folder": "/root",
+            "git_commit": True,
+            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
+            "force_clean_git": False,
+            "force_md_generation": False,
+            "common": {},
+        }
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=Mock()),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+            patch("docs2md.clean_git_remote") as mock_clean,
+            patch("sys.exit"),
+        ):
+            docs2md.main()
+
+        mock_clean.assert_not_called()
+
+    def test_force_clean_git_with_git_disabled_logs_warning(self):
+        """force_clean_git: true + git_commit: false must log a warning and skip clean."""
+        config = {
+            "root_folder": "/root",
+            "git_commit": False,
+            "force_clean_git": True,
+            "force_md_generation": False,
+            "common": {},
+        }
+        mock_logger = Mock()
+        with (
+            patch("docs2md.load_config", return_value=config),
+            patch("docs2md.setup_logging", return_value=mock_logger),
+            patch("docs2md.verify_pandoc", return_value=True),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.exists", return_value=True),
+            patch("docs2md.process_directories_recursively"),
+            patch("docs2md.clean_git_remote") as mock_clean,
+            patch("sys.exit"),
+        ):
+            docs2md.main()
+
+        mock_clean.assert_not_called()
+        warning_text = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        self.assertIn("force_clean_git", warning_text)
 
 
 if __name__ == "__main__":

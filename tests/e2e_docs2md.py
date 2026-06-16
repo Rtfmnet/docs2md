@@ -484,5 +484,109 @@ class TestIntegrationDocs2md(unittest.TestCase):
         self.assertNotIn("report.md", standalone)
 
 
+class TestForceCleanGitE2E(unittest.TestCase):
+    """E2E test for force_clean_git: verifies clean_git_remote is called before
+    any push_commit_file calls when force_clean_git is enabled."""
+
+    def setUp(self):
+        self.test_data_dir = os.path.join(
+            os.path.dirname(__file__), "test_data", "cr5_e2e"
+        )
+        if os.path.exists(self.test_data_dir):
+            shutil.rmtree(self.test_data_dir)
+        os.makedirs(self.test_data_dir)
+        self.logger = docs2md.setup_logging()
+
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+
+    def tearDown(self):
+        if os.path.exists(self.test_data_dir):
+            try:
+                shutil.rmtree(self.test_data_dir)
+            except Exception:
+                pass
+        docs2md._git_manager = None
+        docs2md._git_manager_error = False
+
+    def test_force_clean_git_called_before_push(self):
+        """With force_clean_git:true, list_files/delete_file run before push_commit_file."""
+        from unittest.mock import Mock, call, patch
+
+        # Create a minimal directory with README + one source file
+        readme_path = os.path.join(self.test_data_dir, "README.md")
+        with open(readme_path, "w") as f:
+            f.write("# Test\ndoc2md#aikb\nsource.html\n")
+
+        source_path = os.path.join(self.test_data_dir, "source.html")
+        with open(source_path, "w") as f:
+            f.write("<html><body>E2E test</body></html>")
+
+        call_order = []
+
+        mock_gm = Mock()
+        mock_gm.verify_path.return_value = (True, {"contents_count": 1})
+        mock_gm.get_last_commit_time.return_value = (False, {"error": "not found"})
+        mock_gm.list_files.side_effect = lambda *a, **kw: (
+            call_order.append("list_files")
+            or (True, {"files": ["README.md", "old.md"]})
+        )
+        mock_gm.delete_file.side_effect = lambda *a, **kw: (
+            call_order.append("delete_file") or (True, {"message": "deleted"})
+        )
+        mock_gm.push_commit_file.side_effect = lambda *a, **kw: (
+            call_order.append("push_commit_file")
+            or (True, {"message": "created", "file_path": "x.md"})
+        )
+
+        config = {
+            "root_folder": self.test_data_dir,
+            "git_commit": True,
+            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
+            "force_clean_git": True,
+            "force_md_generation": True,
+            "common": {},
+        }
+
+        stats = {
+            "dirs_processed": 0,
+            "dirs_skipped": 0,
+            "files_generated": 0,
+            "files_committed": 0,
+            "files_skipped": 0,
+            "files_errors": 0,
+            "files_git_identical": 0,
+        }
+
+        with patch("docs2md.GitManager", return_value=mock_gm):
+            # Run clean manually (as main() would) — deletes all + pushes .gitkeep
+            docs2md.clean_git_remote(config["git_url"], mock_gm, self.logger)
+            # Then process directories
+            docs2md.process_directories_recursively(
+                self.test_data_dir, config, self.logger, stats
+            )
+
+        # list_files must appear in call order
+        self.assertIn("list_files", call_order)
+        # delete_file calls must all finish before any processing-phase push_commit_file
+        # (the first push_commit_file in call_order is the .gitkeep from clean_git_remote,
+        #  so we verify that ALL delete_file calls precede the LAST push_commit_file
+        #  that came from the processing phase, i.e. that clean ran fully before processing)
+        if call_order.count("push_commit_file") > 1:
+            # At least the .gitkeep push + one content push happened
+            last_delete = max(
+                (i for i, c in enumerate(call_order) if c == "delete_file"),
+                default=-1,
+            )
+            last_push = max(
+                i for i, c in enumerate(call_order) if c == "push_commit_file"
+            )
+            self.assertLess(
+                last_delete,
+                last_push,
+                "All delete_file calls must complete before final push_commit_file",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

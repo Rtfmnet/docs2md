@@ -7,7 +7,9 @@ import os
 import re
 import sys
 import fnmatch
+import shutil
 import subprocess
+import tempfile
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -561,6 +563,74 @@ def _calc_child_path(file_path, config, logger):
         return None
 
 
+GITKEEP_FILENAME = ".gitkeep"
+
+
+def clean_git_remote(git_url, git_manager, logger):
+    """
+    Delete ALL files from the remote git path, then push a .gitkeep file to
+    the root of the git_url path to keep the remote directory alive.
+
+    After a clean the caller is expected to re-push all content files
+    (requires force_md_generation: true) and README files
+    (requires force_readme_git_commit: true).
+
+    Args:
+        git_url (str): URL to the git repository tree (configured git_url).
+        git_manager (GitManager): Initialized GitManager instance.
+        logger (logging.Logger): Logger instance.
+
+    Raises:
+        GitFatalError: If listing, deleting, or pushing .gitkeep fails.
+    """
+    import tempfile
+
+    success, details = git_manager.list_files(git_url)
+    if not success:
+        raise GitFatalError(
+            f"Git clean failed (list files): {details.get('error', 'unknown error')}"
+        )
+
+    all_files = details.get("files", [])
+
+    # Preserve root-level .gitkeep — no need to delete and re-push it
+    root_gitkeep = GITKEEP_FILENAME
+    files_to_delete = [f for f in all_files if f != root_gitkeep]
+    gitkeep_exists = len(files_to_delete) < len(all_files)
+
+    logger.info(f"Git clean: {len(files_to_delete)} files to delete")
+
+    for f in files_to_delete:
+        ok, d = git_manager.delete_file(f, git_url, "doc2md#clean")
+        if not ok:
+            raise GitFatalError(
+                f"Git clean failed (delete '{f}'): {d.get('error', 'unknown error')}"
+            )
+
+    logger.info(f"Git clean: done, {len(files_to_delete)} files deleted")
+
+    # Push .gitkeep to root if it didn't already exist
+    if gitkeep_exists:
+        logger.info("Git clean: .gitkeep already exists in remote, skipping push")
+    else:
+        logger.info("Git clean: pushing .gitkeep to keep remote path alive")
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            gitkeep_path = os.path.join(tmp_dir, GITKEEP_FILENAME)
+            with open(gitkeep_path, "w") as f:
+                pass  # empty file
+            ok, d = git_manager.push_commit_file(
+                gitkeep_path, git_url, "doc2md#clean", git_child_path=""
+            )
+            if not ok:
+                raise GitFatalError(
+                    f"Git clean failed (push .gitkeep): {d.get('error', 'unknown error')}"
+                )
+            logger.info("Git clean: .gitkeep pushed successfully")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def sync_readme_to_git(readme_path, config, logger):
     """
     Synchronize a README.md file to git repository if configured.
@@ -1074,9 +1144,38 @@ def main():
         if active_project:
             logger.info(f"Active project: {active_project}")
         logger.info(f'Files path: "{root_folder}"')
-        if config.get("git_commit", False):
-            git_url = config.get("git_url", "")
+        git_commit_enabled = config.get("git_commit", False)
+        git_url = config.get("git_url", "")
+        if git_commit_enabled:
             logger.info(f'Git path: "{git_url}"')
+
+        # Force clean git remote if configured
+        force_clean = config.get("force_clean_git", False)
+        if force_clean:
+            if not git_commit_enabled:
+                logger.warning(
+                    "force_clean_git is set but git_commit is false — clean skipped"
+                )
+            elif not config.get("force_md_generation", False):
+                logger.error(
+                    "force_clean_git requires force_md_generation: true — "
+                    "without it, up-to-date local .md files are skipped and "
+                    "will not be re-pushed after the remote is cleaned. "
+                    "Set force_md_generation: true in config and re-run."
+                )
+                sys.exit(1)
+            elif not config.get("force_readme_git_commit", False):
+                logger.error(
+                    "force_clean_git requires force_readme_git_commit: true — "
+                    "without it, README.md files are skipped and "
+                    "will not be re-pushed after the remote is cleaned. "
+                    "Set force_readme_git_commit: true in config and re-run."
+                )
+                sys.exit(1)
+            else:
+                logger.info(f'Git clean: deleting all remote files from "{git_url}"')
+                git_manager = _ensure_git_manager(config, logger)
+                clean_git_remote(git_url, git_manager, logger)
 
         # Process directories
         stats = {
