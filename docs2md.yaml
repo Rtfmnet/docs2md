@@ -10,10 +10,10 @@ tests:
 
 small_tests:
   root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests\small_tests'
-  force_md_generation: true
+  force_md_generation: false
   git_commit: true
-  force_readme_git_commit: true
-  force_clean_git: true
+  force_readme_git_commit: false
+  force_clean_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests/small_tests'
 
 fa:
@@ -32,10 +32,10 @@ of:
 
 psaas:
   root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\PrivateSaaS'
-  force_md_generation: false
+  force_md_generation: true
   git_commit: true
-  force_readme_git_commit: false
-  force_clean_git: false
+  force_readme_git_commit: true
+  force_clean_git: true
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-psaas/-/tree/main/PrivateSaaS'
 
 common:

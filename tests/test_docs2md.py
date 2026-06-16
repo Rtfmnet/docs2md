@@ -250,6 +250,31 @@ class TestReadmeParsing(unittest.TestCase):
         )
         self.assertFalse(docs2md.is_file_referenced_in_readme("test.docx", None))
 
+    def test_file_referenced_with_brackets_and_plus(self):
+        """Filenames starting with [ or containing + must match when listed by name."""
+        bracket_plus = "[WIP]+Azure+Private+SaaS+Solution+Architecture.docx"
+        readme = f"- {bracket_plus}"
+        self.assertTrue(docs2md.is_file_referenced_in_readme(bracket_plus, readme))
+
+    def test_file_referenced_bracket_only(self):
+        """Filenames starting with [ and no + must also match."""
+        bracket = "[WIP] Azure Private.docx"
+        readme = f"- {bracket}"
+        self.assertTrue(docs2md.is_file_referenced_in_readme(bracket, readme))
+
+    def test_file_referenced_in_markdown_link(self):
+        """Bracket+plus filename inside a markdown link href must match."""
+        bracket_plus = "[WIP]+Azure.docx"
+        readme = f"[Azure Docs]({bracket_plus})"
+        self.assertTrue(docs2md.is_file_referenced_in_readme(bracket_plus, readme))
+
+    def test_file_not_referenced_returns_false(self):
+        """Bracket+plus filename absent from README returns False."""
+        bracket_plus = "[WIP]+Azure.docx"
+        self.assertFalse(
+            docs2md.is_file_referenced_in_readme(bracket_plus, "- Other.docx")
+        )
+
     def test_filter_files_keeps_referenced(self):
         result = docs2md.filter_files_by_readme(
             ["test.docx", "other.docx"], "test.docx referenced", False, Mock()

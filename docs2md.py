@@ -347,15 +347,19 @@ def apply_masks(files, masks):
 
 
 def is_file_referenced_in_readme(filename, readme_content):
-    """Check if file is referenced in README (case insensitive, word boundary)"""
+    """Check if file is referenced in README (case insensitive, non-word boundary)"""
     if not readme_content:
         return False
 
     # Get filename with and without extension
     name_without_ext = os.path.splitext(filename)[0]
 
-    # Create patterns with word boundaries
-    patterns = [rf"\b{re.escape(filename)}\b", rf"\b{re.escape(name_without_ext)}\b"]
+    # Use lookarounds instead of \b so filenames starting/ending with non-word
+    # characters (e.g. "[WIP]+Azure+...docx") are matched correctly
+    patterns = [
+        rf"(?<!\w){re.escape(filename)}(?!\w)",
+        rf"(?<!\w){re.escape(name_without_ext)}(?!\w)",
+    ]
 
     for pattern in patterns:
         if re.search(pattern, readme_content, re.IGNORECASE):
@@ -369,7 +373,10 @@ def get_file_reference_line(filename, readme_content):
         return None
 
     name_without_ext = os.path.splitext(filename)[0]
-    patterns = [rf"\b{re.escape(filename)}\b", rf"\b{re.escape(name_without_ext)}\b"]
+    patterns = [
+        rf"(?<!\w){re.escape(filename)}(?!\w)",
+        rf"(?<!\w){re.escape(name_without_ext)}(?!\w)",
+    ]
 
     for line in readme_content.split("\n"):
         for pattern in patterns:
