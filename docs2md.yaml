@@ -1,11 +1,11 @@
-active_project: psaas  # <-- only this line changes
+active_project: small_tests  # <-- only this line changes
 
 tests:
   root_folder: 'C:\Users\Oleksii_Zotov\PycharmProjects\docs2md\tests\manual_tests'
   force_md_generation: false
   git_commit: true
   force_readme_git_commit: false
-  force_clean_git: false
+  recreate_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests'
 
 small_tests:
@@ -13,7 +13,7 @@ small_tests:
   force_md_generation: false
   git_commit: true
   force_readme_git_commit: false
-  force_clean_git: false
+  recreate_git: true
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-sandbox/-/tree/main/doc2md-tests/small_tests'
 
 fa:
@@ -21,6 +21,7 @@ fa:
   force_md_generation: false
   git_commit: true
   force_readme_git_commit: false
+  recreate_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-fa/-/tree/main/FA'
 
 of:
@@ -28,6 +29,7 @@ of:
   force_md_generation: false
   git_commit: true
   force_readme_git_commit: false
+  recreate_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-of/-/tree/main/OptiFlow'
 
 psaas:
@@ -35,7 +37,7 @@ psaas:
   force_md_generation: false
   git_commit: true
   force_readme_git_commit: false
-  force_clean_git: false
+  recreate_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-psaas/-/tree/main/PrivateSaaS'
 
 common:

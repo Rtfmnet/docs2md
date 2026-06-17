@@ -1046,26 +1046,47 @@ class TestMain(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 9. force_clean_git (clean_git_remote + main() wiring)
+# 9. recreate_git (clean_git_remote + main() wiring)
 # ---------------------------------------------------------------------------
 
 
+import tempfile
+import contextlib
+
+
+@contextlib.contextmanager
+def _TempDirWithReadme(subdir_name, tagged):
+    """Context manager: creates a temp root with a subdir containing a README.md.
+
+    Args:
+        subdir_name (str): Name of the subdirectory to create inside the temp root.
+        tagged (bool): If True, the README.md will contain the doc2md#aikb tag.
+    """
+    with tempfile.TemporaryDirectory() as root:
+        subdir = os.path.join(root, subdir_name)
+        os.makedirs(subdir)
+        content = f"{docs2md.TAG_AIKB}\n" if tagged else "# Plain readme\n"
+        with open(os.path.join(subdir, "README.md"), "w") as f:
+            f.write(content)
+        yield root
+
+
 class TestForceCleanGit(unittest.TestCase):
-    """clean_git_remote logic and force_clean_git config key wiring in main()."""
+    """clean_git_remote smart-clean logic and recreate_git config key wiring in main()."""
 
     def setUp(self):
         docs2md._git_manager = None
         docs2md._git_manager_error = False
         self.logger = Mock()
 
-    # --- clean_git_remote ---
+    # --- clean_git_remote (root_folder=None: all non-.gitkeep files are root-level) ---
 
-    def test_clean_git_remote_deletes_all_files_including_readmes(self):
-        """clean_git_remote deletes ALL files including README.md; preserves root .gitkeep."""
+    def test_clean_git_remote_deletes_root_level_files(self):
+        """clean_git_remote deletes root-level files; preserves root .gitkeep."""
         mock_gm = Mock()
         mock_gm.list_files.return_value = (
             True,
-            {"files": ["README.md", "report.md", "subdir/README.md", "subdir/doc.md"]},
+            {"files": ["README.md", "report.md"]},
         )
         mock_gm.delete_file.return_value = (True, {"message": "deleted"})
         mock_gm.push_commit_file.return_value = (True, {"message": "created"})
@@ -1076,14 +1097,80 @@ class TestForceCleanGit(unittest.TestCase):
             self.logger,
         )
 
-        # Every file deleted — no .gitkeep in remote so it must be pushed
-        self.assertEqual(mock_gm.delete_file.call_count, 4)
+        # Root-level files deleted; no .gitkeep in remote so it must be pushed
+        self.assertEqual(mock_gm.delete_file.call_count, 2)
         deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
         self.assertIn("README.md", deleted)
-        self.assertIn("subdir/README.md", deleted)
         self.assertIn("report.md", deleted)
-        self.assertIn("subdir/doc.md", deleted)
         mock_gm.push_commit_file.assert_called_once()
+
+    def test_clean_git_remote_deletes_tagged_subdir_files(self):
+        """clean_git_remote deletes files in subdirectories tagged with doc2md#aikb locally."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["subdir/README.md", "subdir/doc.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        with _TempDirWithReadme("subdir", tagged=True) as root:
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+                root_folder=root,
+            )
+
+        self.assertEqual(mock_gm.delete_file.call_count, 2)
+        deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
+        self.assertIn("subdir/README.md", deleted)
+        self.assertIn("subdir/doc.md", deleted)
+
+    def test_clean_git_remote_preserves_untagged_subdir_files(self):
+        """clean_git_remote preserves files in subdirectories whose local README has no aikb."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["plain/README.md", "plain/doc.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        with _TempDirWithReadme("plain", tagged=False) as root:
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+                root_folder=root,
+            )
+
+        mock_gm.delete_file.assert_not_called()
+
+    def test_clean_git_remote_preserves_files_when_local_dir_has_no_readme(self):
+        """clean_git_remote preserves subdir files when the local directory exists but has no README.md."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["noreadme/file.md", "noreadme/other.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+
+        with tempfile.TemporaryDirectory() as root:
+            # Create the local directory but do NOT create a README.md inside it
+            os.makedirs(os.path.join(root, "noreadme"))
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+                root_folder=root,
+            )
+
+        # Files must be preserved — no deletes
+        mock_gm.delete_file.assert_not_called()
+        # get_file_content must NOT be called (local dir found, no remote fallback)
+        mock_gm.get_file_content.assert_not_called()
 
     def test_clean_git_remote_skips_push_when_gitkeep_exists(self):
         """clean_git_remote does NOT push .gitkeep when it already exists in remote."""
@@ -1155,6 +1242,59 @@ class TestForceCleanGit(unittest.TestCase):
             )
         self.assertIn("403 Forbidden", str(ctx.exception))
 
+    def test_clean_git_remote_remote_only_tagged_deleted(self):
+        """clean_git_remote deletes files in remote-only subdirs tagged via remote README."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["RemoteOnly/README.md", "RemoteOnly/old.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+        mock_gm.get_file_content.side_effect = lambda rel, url: (
+            (True, {"content": "doc2md#aikb\ncontent"})
+            if rel == "RemoteOnly/README.md"
+            else (False, {"error": "not found"})
+        )
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            # No local "RemoteOnly" directory exists
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+                root_folder=root,
+            )
+
+        deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
+        self.assertIn("RemoteOnly/README.md", deleted)
+        self.assertIn("RemoteOnly/old.md", deleted)
+
+    def test_clean_git_remote_remote_only_untagged_preserved(self):
+        """clean_git_remote preserves files in remote-only subdirs not tagged remotely."""
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (
+            True,
+            {"files": ["RemoteUntagged/file.md"]},
+        )
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+        mock_gm.get_file_content.return_value = (True, {"content": "plain readme"})
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            docs2md.clean_git_remote(
+                "https://gitbud.epam.com/proj/-/tree/main/docs",
+                mock_gm,
+                self.logger,
+                root_folder=root,
+            )
+
+        mock_gm.delete_file.assert_not_called()
+
     # --- main() wiring ---
 
     def _run_main_with_config(self, config):
@@ -1170,17 +1310,17 @@ class TestForceCleanGit(unittest.TestCase):
         ):
             return mock_logger
 
-    def test_force_clean_git_triggers_clean_before_processing(self):
-        """force_clean_git: true + all required flags set calls list_files and pushes .gitkeep."""
+    def test_recreate_git_triggers_clean_and_auto_injects_flags(self):
+        """recreate_git: true triggers clean and auto-sets force_md_generation and force_readme_git_commit."""
         docs2md._git_manager = None
         docs2md._git_manager_error = False
         config = {
             "root_folder": "/root",
             "git_commit": True,
             "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
-            "force_clean_git": True,
-            "force_md_generation": True,
-            "force_readme_git_commit": True,
+            "recreate_git": True,
+            "force_md_generation": False,
+            "force_readme_git_commit": False,
             "common": {},
         }
         mock_gm = Mock()
@@ -1201,78 +1341,23 @@ class TestForceCleanGit(unittest.TestCase):
         ):
             docs2md.main()
 
+        # Force flags must be auto-set in memory
+        self.assertTrue(config.get("force_md_generation"))
+        self.assertTrue(config.get("force_readme_git_commit"))
+        # Clean must be triggered
         mock_gm.list_files.assert_called_once()
         # .gitkeep must be pushed to keep remote path alive
         mock_gm.push_commit_file.assert_called_once()
         pushed_file = mock_gm.push_commit_file.call_args.args[0]
         self.assertTrue(os.path.basename(pushed_file) == docs2md.GITKEEP_FILENAME)
 
-    def test_force_clean_git_without_force_md_generation_exits(self):
-        """force_clean_git: true + force_md_generation: false must exit with error."""
-        docs2md._git_manager = None
-        docs2md._git_manager_error = False
+    def test_recreate_git_false_skips_clean(self):
+        """recreate_git: false (default) must NOT call clean_git_remote."""
         config = {
             "root_folder": "/root",
             "git_commit": True,
             "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
-            "force_clean_git": True,
-            "force_md_generation": False,
-            "common": {},
-        }
-        mock_logger = Mock()
-        with (
-            patch("docs2md.load_config", return_value=config),
-            patch("docs2md.setup_logging", return_value=mock_logger),
-            patch("docs2md.verify_pandoc", return_value=True),
-            patch("os.path.isabs", return_value=True),
-            patch("os.path.exists", return_value=True),
-            patch("docs2md.clean_git_remote") as mock_clean,
-            patch("sys.exit") as mock_exit,
-        ):
-            docs2md.main()
-
-        mock_exit.assert_called_with(1)
-        mock_clean.assert_not_called()
-        error_text = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        self.assertIn("force_md_generation", error_text)
-
-    def test_force_clean_git_without_force_readme_git_commit_exits(self):
-        """force_clean_git: true + force_readme_git_commit: false must exit with error."""
-        docs2md._git_manager = None
-        docs2md._git_manager_error = False
-        config = {
-            "root_folder": "/root",
-            "git_commit": True,
-            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
-            "force_clean_git": True,
-            "force_md_generation": True,
-            "force_readme_git_commit": False,
-            "common": {},
-        }
-        mock_logger = Mock()
-        with (
-            patch("docs2md.load_config", return_value=config),
-            patch("docs2md.setup_logging", return_value=mock_logger),
-            patch("docs2md.verify_pandoc", return_value=True),
-            patch("os.path.isabs", return_value=True),
-            patch("os.path.exists", return_value=True),
-            patch("docs2md.clean_git_remote") as mock_clean,
-            patch("sys.exit") as mock_exit,
-        ):
-            docs2md.main()
-
-        mock_exit.assert_called_with(1)
-        mock_clean.assert_not_called()
-        error_text = " ".join(str(c) for c in mock_logger.error.call_args_list)
-        self.assertIn("force_readme_git_commit", error_text)
-
-    def test_force_clean_git_false_skips_clean(self):
-        """force_clean_git: false (default) must NOT call clean_git_remote."""
-        config = {
-            "root_folder": "/root",
-            "git_commit": True,
-            "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
-            "force_clean_git": False,
+            "recreate_git": False,
             "force_md_generation": False,
             "common": {},
         }
@@ -1290,12 +1375,12 @@ class TestForceCleanGit(unittest.TestCase):
 
         mock_clean.assert_not_called()
 
-    def test_force_clean_git_with_git_disabled_logs_warning(self):
-        """force_clean_git: true + git_commit: false must log a warning and skip clean."""
+    def test_recreate_git_with_git_disabled_logs_warning(self):
+        """recreate_git: true + git_commit: false must log a warning and skip clean."""
         config = {
             "root_folder": "/root",
             "git_commit": False,
-            "force_clean_git": True,
+            "recreate_git": True,
             "force_md_generation": False,
             "common": {},
         }
@@ -1314,7 +1399,7 @@ class TestForceCleanGit(unittest.TestCase):
 
         mock_clean.assert_not_called()
         warning_text = " ".join(str(c) for c in mock_logger.warning.call_args_list)
-        self.assertIn("force_clean_git", warning_text)
+        self.assertIn("recreate_git", warning_text)
 
 
 if __name__ == "__main__":

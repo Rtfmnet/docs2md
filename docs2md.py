@@ -573,19 +573,39 @@ def _calc_child_path(file_path, config, logger):
 GITKEEP_FILENAME = ".gitkeep"
 
 
-def clean_git_remote(git_url, git_manager, logger):
+def clean_git_remote(git_url, git_manager, logger, root_folder=None):
     """
-    Delete ALL files from the remote git path, then push a .gitkeep file to
-    the root of the git_url path to keep the remote directory alive.
+    Delete files from the remote git path that belong to tagged subdirectories
+    (those whose README.md contains the doc2md#aikb tag), then push a .gitkeep
+    file to the root of the git_url path to keep the remote directory alive.
 
-    After a clean the caller is expected to re-push all content files
-    (requires force_md_generation: true) and README files
-    (requires force_readme_git_commit: true).
+    A subdirectory is considered "tagged" when:
+      - Local check (if root_folder is provided): the local directory has a
+        README.md with doc2md#aikb  →  this takes precedence over remote.
+      - Remote check (fallback when no local dir or no local README): the remote
+        README.md for that subdirectory contains doc2md#aikb.
+    Root-level files (no subdirectory component) are always deleted.
+
+    Decision table per subdirectory:
+      Case 1: exists locally & remotely, both tagged            → delete
+      Case 2: exists remotely only, tagged remotely             → delete
+      Case 3: exists locally & remotely, tagged locally         → delete
+      Case 4: exists locally & remotely, tagged remotely only
+              (local README exists but has no aikb)             → delete
+      Case 5: local only, tagged locally (nothing remote)       → skip (nothing to delete)
+      Case 6: local dir exists but no local README.md           → preserve
+      Untagged (locally or remotely)                            → preserve
+
+    After a clean, the caller is expected to re-push all content files
+    (force_md_generation is set to True in memory by main()) and README files
+    (force_readme_git_commit is set to True in memory by main()).
 
     Args:
         git_url (str): URL to the git repository tree (configured git_url).
         git_manager (GitManager): Initialized GitManager instance.
         logger (logging.Logger): Logger instance.
+        root_folder (str | None): Local root folder path. When provided, used to
+            determine local tag status of each subdirectory.
 
     Raises:
         GitFatalError: If listing, deleting, or pushing .gitkeep fails.
@@ -600,11 +620,91 @@ def clean_git_remote(git_url, git_manager, logger):
 
     all_files = details.get("files", [])
 
+    # Cache of subdir tag decisions to avoid redundant remote fetches
+    # Key: subdir name (e.g. "SubA" or "SubA/ChildB"), Value: bool (tagged?)
+    _subdir_tag_cache = {}
+
+    def _is_subdir_tagged(subdir):
+        """
+        Return True if the subdir is tagged with doc2md#aikb (locally or remotely).
+        Local check takes precedence when root_folder is provided.
+        """
+        if subdir in _subdir_tag_cache:
+            return _subdir_tag_cache[subdir]
+
+        tagged = False
+
+        # --- Local check (takes precedence) ---
+        if root_folder:
+            local_dir = os.path.join(root_folder, subdir.replace("/", os.sep))
+            local_readme = os.path.join(local_dir, README_FILENAME)
+            if os.path.exists(local_readme):
+                content = read_readme(local_readme)
+                # Local README found — its tag status is authoritative
+                tagged = check_aikb_tag(content) if content else False
+                _subdir_tag_cache[subdir] = tagged
+                return tagged
+            if os.path.isdir(local_dir):
+                # Local directory exists but has no README.md — this subdir is
+                # not managed by docs2md, so preserve its remote files
+                _subdir_tag_cache[subdir] = False
+                return False
+            # Local directory does not exist — fall through to remote check
+
+        # --- Remote check (fallback) ---
+        readme_rel = f"{subdir}/{README_FILENAME}" if subdir else README_FILENAME
+        ok, rdata = git_manager.get_file_content(readme_rel, git_url)
+        if ok:
+            tagged = check_aikb_tag(rdata.get("content", ""))
+        else:
+            tagged = False
+
+        _subdir_tag_cache[subdir] = tagged
+        return tagged
+
     # Preserve root-level .gitkeep — no need to delete and re-push it
     root_gitkeep = GITKEEP_FILENAME
-    files_to_delete = [f for f in all_files if f != root_gitkeep]
-    gitkeep_exists = len(files_to_delete) < len(all_files)
 
+    files_to_delete = []
+    files_preserved = []
+    for f in all_files:
+        if f == root_gitkeep:
+            continue
+        parts = f.replace("\\", "/").split("/")
+        if len(parts) == 1:
+            # Root-level file — always delete
+            files_to_delete.append(f)
+        else:
+            subdir = parts[0]
+            if _is_subdir_tagged(subdir):
+                files_to_delete.append(f)
+            else:
+                files_preserved.append(f)
+
+    gitkeep_exists = root_gitkeep in all_files
+
+    # Collect unique top-level subdirs that will be deleted vs preserved
+    deleted_subdirs = sorted(
+        {
+            f.replace("\\", "/").split("/")[0]
+            for f in files_to_delete
+            if "/" in f.replace("\\", "/")
+        }
+    )
+    preserved_subdirs = sorted(
+        {
+            f.replace("\\", "/").split("/")[0]
+            for f in files_preserved
+            if "/" in f.replace("\\", "/")
+        }
+    )
+
+    if preserved_subdirs:
+        logger.info(
+            f"Git clean: {len(files_preserved)} files preserved in "
+            f"{len(preserved_subdirs)} folder(s) not tagged with {TAG_AIKB}: "
+            + ", ".join(f'"{s}"' for s in preserved_subdirs)
+        )
     logger.info(f"Git clean: {len(files_to_delete)} files to delete")
 
     for f in files_to_delete:
@@ -614,7 +714,14 @@ def clean_git_remote(git_url, git_manager, logger):
                 f"Git clean failed (delete '{f}'): {d.get('error', 'unknown error')}"
             )
 
-    logger.info(f"Git clean: done, {len(files_to_delete)} files deleted")
+    if deleted_subdirs:
+        logger.info(
+            f"Git clean: deleted {len(files_to_delete)} files from "
+            f"{len(deleted_subdirs)} folder(s): "
+            + ", ".join(f'"{s}"' for s in deleted_subdirs)
+        )
+    else:
+        logger.info(f"Git clean: done, {len(files_to_delete)} files deleted")
 
     # Push .gitkeep to root if it didn't already exist
     if gitkeep_exists:
@@ -1157,32 +1264,25 @@ def main():
             logger.info(f'Git path: "{git_url}"')
 
         # Force clean git remote if configured
-        force_clean = config.get("force_clean_git", False)
+        force_clean = config.get("recreate_git", False)
         if force_clean:
             if not git_commit_enabled:
                 logger.warning(
-                    "force_clean_git is set but git_commit is false — clean skipped"
+                    "recreate_git is set but git_commit is false — clean skipped"
                 )
-            elif not config.get("force_md_generation", False):
-                logger.error(
-                    "force_clean_git requires force_md_generation: true — "
-                    "without it, up-to-date local .md files are skipped and "
-                    "will not be re-pushed after the remote is cleaned. "
-                    "Set force_md_generation: true in config and re-run."
-                )
-                sys.exit(1)
-            elif not config.get("force_readme_git_commit", False):
-                logger.error(
-                    "force_clean_git requires force_readme_git_commit: true — "
-                    "without it, README.md files are skipped and "
-                    "will not be re-pushed after the remote is cleaned. "
-                    "Set force_readme_git_commit: true in config and re-run."
-                )
-                sys.exit(1)
             else:
-                logger.info(f'Git clean: deleting all remote files from "{git_url}"')
+                # Auto-inject force flags so all files are re-pushed after the clean
+                config["force_md_generation"] = True
+                config["force_readme_git_commit"] = True
+                logger.info(
+                    "recreate_git: force_md_generation and force_readme_git_commit "
+                    "set to true automatically"
+                )
+                logger.info(
+                    f'Git clean: deleting tagged remote subdirectory files from "{git_url}"'
+                )
                 git_manager = _ensure_git_manager(config, logger)
-                clean_git_remote(git_url, git_manager, logger)
+                clean_git_remote(git_url, git_manager, logger, root_folder=root_folder)
 
         # Process directories
         stats = {
@@ -1218,6 +1318,11 @@ def main():
             logger.info("Change log:")
             for log in important_logs:
                 logger.info(log)
+        if force_clean:
+            logger.warning(
+                "recreate_git is set to true — remember to set it back to false, "
+                "otherwise the git repository will be re-created on the next run"
+            )
         logger.debug("Execution complete.")
 
         # Pause if configured

@@ -1174,5 +1174,170 @@ class TestGitManagerCleanGit(unittest.TestCase):
         self.assertEqual(change_type, "delete")
 
 
+# ---------------------------------------------------------------------------
+# TestGetFileContent
+# ---------------------------------------------------------------------------
+
+
+class TestGetFileContent(unittest.TestCase):
+    """Tests for GitManager.get_file_content() across all three providers."""
+
+    # --- GitLab ---
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_gitlab_success(self, mock_get, mock_init):
+        """get_file_content returns raw text content from GitLab."""
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.text = "doc2md#aikb\nSome content"
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "README.md",
+            "https://gitbud.epam.com/org/repo/-/tree/main/subdir",
+        )
+
+        self.assertTrue(success)
+        self.assertIn("doc2md#aikb", details["content"])
+        # Verify the correct raw-file API endpoint was called
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("/repository/files/", called_url)
+        self.assertIn("/raw", called_url)
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_gitlab_not_found(self, mock_get, mock_init):
+        """get_file_content returns failure with 'not found' when GitLab returns 404."""
+        mock_resp = Mock()
+        mock_resp.status_code = 404
+        mock_resp.text = "Not Found"
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "missing.md",
+            "https://gitbud.epam.com/org/repo/-/tree/main/subdir",
+        )
+
+        self.assertFalse(success)
+        self.assertIn("not found", details["error"].lower())
+
+    # --- GitHub ---
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_github_success(self, mock_get, mock_init):
+        """get_file_content decodes base64 content from GitHub Contents API."""
+        import base64
+
+        raw_text = "doc2md#aikb\nGitHub content"
+        encoded = base64.b64encode(raw_text.encode()).decode()
+
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"content": encoded + "\n", "encoding": "base64"}
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "README.md",
+            "https://github.com/owner/repo/tree/main/docs",
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(details["content"], raw_text)
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("api.github.com/repos/owner/repo/contents/", called_url)
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_github_not_found(self, mock_get, mock_init):
+        """get_file_content returns failure when GitHub returns 404."""
+        mock_resp = Mock()
+        mock_resp.status_code = 404
+        mock_resp.text = "Not Found"
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "missing.md",
+            "https://github.com/owner/repo/tree/main/docs",
+        )
+
+        self.assertFalse(success)
+        self.assertIn("not found", details["error"].lower())
+
+    # --- Azure DevOps ---
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_azure_success(self, mock_get, mock_init):
+        """get_file_content returns raw text content from Azure DevOps."""
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.text = "doc2md#aikb\nAzure content"
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "README.md",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain&path=/docs",
+        )
+
+        self.assertTrue(success)
+        self.assertIn("doc2md#aikb", details["content"])
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("/items", called_url)
+        self.assertIn("$format=text", called_url)
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    @patch("requests.get")
+    def test_get_file_content_azure_not_found(self, mock_get, mock_init):
+        """get_file_content returns failure when Azure DevOps returns 404."""
+        mock_resp = Mock()
+        mock_resp.status_code = 404
+        mock_resp.text = "Not Found"
+        mock_get.return_value = mock_resp
+
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "missing.md",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo?version=GBmain",
+        )
+
+        self.assertFalse(success)
+        self.assertIn("not found", details["error"].lower())
+
+    # --- Provider routing ---
+
+    @patch.object(GitManager, "__init__", return_value=None)
+    def test_get_file_content_unknown_provider_returns_error(self, mock_init):
+        """get_file_content returns failure for unrecognised URL."""
+        gm = GitManager()
+        gm.token = "test_token"
+
+        success, details = gm.get_file_content(
+            "README.md",
+            "https://unknown-host.example.com/repo/tree/main",
+        )
+
+        self.assertFalse(success)
+        self.assertIn("error", details)
+
+
 if __name__ == "__main__":
     unittest.main()

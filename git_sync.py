@@ -201,6 +201,30 @@ class GitManager:
             return self._delete_file_azure(relative_file_path, git_url, commit_message)
         return self._delete_file_gitlab(relative_file_path, git_url, commit_message)
 
+    def get_file_content(self, relative_file_path, git_url):
+        """
+        Fetch the raw text content of a single file from the remote git repository.
+
+        Args:
+            relative_file_path (str): File path relative to the subdir in git_url
+                (e.g. "README.md" or "subdir/README.md").
+            git_url (str): URL to git repository tree.
+
+        Returns:
+            tuple: (success, details) where details["content"] is the file's raw
+                   text content on success, or details["error"] on failure.
+        """
+        try:
+            provider = self._detect_provider(git_url)
+        except ValueError as e:
+            return False, {"error": str(e)}
+
+        if provider == self.PROVIDER_GITHUB:
+            return self._get_file_content_github(relative_file_path, git_url)
+        if provider == self.PROVIDER_AZURE:
+            return self._get_file_content_azure(relative_file_path, git_url)
+        return self._get_file_content_gitlab(relative_file_path, git_url)
+
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
@@ -442,6 +466,38 @@ class GitManager:
 
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
+
+    def _get_file_content_gitlab(self, relative_file_path, git_url):
+        """Fetch raw content of a file from GitLab using the Repository Files API."""
+        try:
+            parts = self._parse_gitlab_url(git_url)
+            hostname = parts["hostname"]
+            project_path = parts["project_path"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            rel = relative_file_path.lstrip("/")
+            target_path = f"{subdir_path}/{rel}" if subdir_path else rel
+            target_path = target_path.replace("//", "/")
+
+            encoded_project_path = urllib.parse.quote(project_path, safe="")
+            encoded_file_path = urllib.parse.quote(target_path, safe="")
+            headers = {"PRIVATE-TOKEN": self.token}
+            url = (
+                f"https://{hostname}/api/v4/projects/{encoded_project_path}"
+                f"/repository/files/{encoded_file_path}/raw"
+                f"?ref={urllib.parse.quote(branch, safe='')}"
+            )
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return True, {"content": response.text}
+            elif response.status_code == 404:
+                return False, {"error": f"File not found: {target_path}"}
+            return False, {
+                "error": f"GitLab file content API failed: {response.status_code} - {response.text}"
+            }
+        except Exception as e:
+            return False, {"error": f"get_file_content failed: {str(e)}"}
 
     def _list_files_gitlab(self, git_url):
         """List all blob files under the GitLab subdir using the Repository Tree API (recursive)."""
@@ -757,6 +813,39 @@ class GitManager:
 
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
+
+    def _get_file_content_github(self, relative_file_path, git_url):
+        """Fetch raw content of a file from GitHub using the Contents API."""
+        try:
+            parts = self._parse_github_url(git_url)
+            owner = parts["owner"]
+            repo = parts["repo"]
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+
+            rel = relative_file_path.lstrip("/")
+            target_path = f"{subdir_path}/{rel}" if subdir_path else rel
+            target_path = target_path.replace("//", "/")
+
+            headers = self._github_headers()
+            api_url = (
+                f"https://api.github.com/repos/{owner}/{repo}/contents/"
+                f"{urllib.parse.quote(target_path, safe='/')}"
+            )
+            response = requests.get(api_url, headers=headers, params={"ref": branch})
+            if response.status_code == 200:
+                data = response.json()
+                encoded_content = data.get("content", "")
+                # GitHub returns base64-encoded content
+                content = base64.b64decode(encoded_content).decode("utf-8")
+                return True, {"content": content}
+            elif response.status_code == 404:
+                return False, {"error": f"File not found: {target_path}"}
+            return False, {
+                "error": f"GitHub file content API failed: {response.status_code} - {response.text}"
+            }
+        except Exception as e:
+            return False, {"error": f"get_file_content failed: {str(e)}"}
 
     def _list_files_github(self, git_url):
         """List all blob files under the GitHub subdir using the Git Trees API (recursive)."""
@@ -1141,6 +1230,43 @@ class GitManager:
 
         except Exception as e:
             return False, {"error": f"Verification failed: {str(e)}"}
+
+    def _get_file_content_azure(self, relative_file_path, git_url):
+        """Fetch raw content of a file from Azure DevOps using the Items API."""
+        try:
+            parts = self._parse_azure_url(git_url)
+            branch = parts["branch"]
+            subdir_path = parts["subdir_path"]
+            base_url = parts["base_url"]
+            api_version = "7.0"
+
+            rel = relative_file_path.lstrip("/")
+            if subdir_path:
+                target_path = f"/{subdir_path.strip('/')}/{rel}"
+            else:
+                target_path = f"/{rel}"
+            target_path = target_path.replace("//", "/")
+
+            headers = self._azure_headers()
+            # Use $format=text to get raw content directly
+            url = (
+                f"{base_url}/items"
+                f"?path={urllib.parse.quote(target_path)}"
+                f"&versionDescriptor.versionType=branch"
+                f"&versionDescriptor.version={urllib.parse.quote(branch)}"
+                f"&$format=text"
+                f"&api-version={api_version}"
+            )
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return True, {"content": response.text}
+            elif response.status_code == 404:
+                return False, {"error": f"File not found: {target_path}"}
+            return False, {
+                "error": f"Azure file content API failed: {response.status_code} - {response.text}"
+            }
+        except Exception as e:
+            return False, {"error": f"get_file_content failed: {str(e)}"}
 
     def _list_files_azure(self, git_url):
         """List all blob files under the Azure DevOps subdir using the Items API (recursive)."""

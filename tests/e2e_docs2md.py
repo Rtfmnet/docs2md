@@ -485,12 +485,12 @@ class TestIntegrationDocs2md(unittest.TestCase):
 
 
 class TestForceCleanGitE2E(unittest.TestCase):
-    """E2E test for force_clean_git: verifies clean_git_remote is called before
-    any push_commit_file calls when force_clean_git is enabled."""
+    """E2E test for recreate_git: verifies clean_git_remote is called before
+    any push_commit_file calls when recreate_git is enabled."""
 
     def setUp(self):
         self.test_data_dir = os.path.join(
-            os.path.dirname(__file__), "test_data", "cr5_e2e"
+            os.path.dirname(__file__), "test_data", "cr6_e2e"
         )
         if os.path.exists(self.test_data_dir):
             shutil.rmtree(self.test_data_dir)
@@ -509,8 +509,8 @@ class TestForceCleanGitE2E(unittest.TestCase):
         docs2md._git_manager = None
         docs2md._git_manager_error = False
 
-    def test_force_clean_git_called_before_push(self):
-        """With force_clean_git:true, list_files/delete_file run before push_commit_file."""
+    def test_recreate_git_called_before_push(self):
+        """With recreate_git:true, list_files/delete_file run before push_commit_file."""
         from unittest.mock import Mock, call, patch
 
         # Create a minimal directory with README + one source file
@@ -527,6 +527,7 @@ class TestForceCleanGitE2E(unittest.TestCase):
         mock_gm = Mock()
         mock_gm.verify_path.return_value = (True, {"contents_count": 1})
         mock_gm.get_last_commit_time.return_value = (False, {"error": "not found"})
+        mock_gm.get_file_content.return_value = (False, {"error": "not found"})
         mock_gm.list_files.side_effect = lambda *a, **kw: (
             call_order.append("list_files")
             or (True, {"files": ["README.md", "old.md"]})
@@ -543,7 +544,7 @@ class TestForceCleanGitE2E(unittest.TestCase):
             "root_folder": self.test_data_dir,
             "git_commit": True,
             "git_url": "https://gitbud.epam.com/proj/-/tree/main/docs",
-            "force_clean_git": True,
+            "recreate_git": True,
             "force_md_generation": True,
             "common": {},
         }
@@ -586,6 +587,61 @@ class TestForceCleanGitE2E(unittest.TestCase):
                 last_push,
                 "All delete_file calls must complete before final push_commit_file",
             )
+
+    def test_smart_clean_only_deletes_tagged_subdirs(self):
+        """recreate_git smart-clean: only files in tagged subdirs are deleted.
+
+        Setup:
+          - root/TaggedDir/README.md  (contains doc2md#aikb)
+          - root/PlainDir/README.md   (no tag)
+
+        Remote has:
+          - TaggedDir/README.md, TaggedDir/doc.md
+          - PlainDir/README.md, PlainDir/doc.md
+
+        Expected: only TaggedDir/* deleted; PlainDir/* preserved.
+        """
+        from unittest.mock import Mock, patch
+
+        # Build local directory structure
+        tagged_dir = os.path.join(self.test_data_dir, "TaggedDir")
+        plain_dir = os.path.join(self.test_data_dir, "PlainDir")
+        os.makedirs(tagged_dir)
+        os.makedirs(plain_dir)
+
+        with open(os.path.join(tagged_dir, "README.md"), "w") as f:
+            f.write("# Tagged\ndoc2md#aikb\n")
+        with open(os.path.join(plain_dir, "README.md"), "w") as f:
+            f.write("# Plain\n")
+
+        remote_files = [
+            "TaggedDir/README.md",
+            "TaggedDir/doc.md",
+            "PlainDir/README.md",
+            "PlainDir/doc.md",
+        ]
+
+        mock_gm = Mock()
+        mock_gm.list_files.return_value = (True, {"files": remote_files})
+        mock_gm.delete_file.return_value = (True, {"message": "deleted"})
+        mock_gm.push_commit_file.return_value = (True, {"message": "created"})
+        # get_file_content will not be called because both dirs exist locally
+        mock_gm.get_file_content.return_value = (False, {"error": "not found"})
+
+        docs2md.clean_git_remote(
+            "https://gitbud.epam.com/proj/-/tree/main/docs",
+            mock_gm,
+            self.logger,
+            root_folder=self.test_data_dir,
+        )
+
+        deleted = [c.args[0] for c in mock_gm.delete_file.call_args_list]
+        self.assertIn("TaggedDir/README.md", deleted)
+        self.assertIn("TaggedDir/doc.md", deleted)
+        self.assertNotIn("PlainDir/README.md", deleted)
+        self.assertNotIn("PlainDir/doc.md", deleted)
+        # get_file_content should NOT be called — both dirs exist locally
+        mock_gm.get_file_content.assert_not_called()
 
 
 if __name__ == "__main__":
