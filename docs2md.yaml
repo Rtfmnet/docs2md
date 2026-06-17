@@ -32,10 +32,10 @@ of:
 
 psaas:
   root_folder: 'C:\Users\Oleksii_Zotov\OneDrive - EPAM\__SLBN\06 Projects Folders\AWS Enablement docs\PrivateSaaS'
-  force_md_generation: true
+  force_md_generation: false
   git_commit: true
-  force_readme_git_commit: true
-  force_clean_git: true
+  force_readme_git_commit: false
+  force_clean_git: false
   git_url: 'https://gitbud.epam.com/slbn-awop/aws-ai-psaas/-/tree/main/PrivateSaaS'
 
 common:

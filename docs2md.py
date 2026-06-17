@@ -722,7 +722,7 @@ def sync_readme_to_git(readme_path, config, logger):
     logger.debug(f"Syncing README file to git: {readme_path}")
     result = sync_to_git(readme_path, config, logger)
     if result is True:
-        logger.debug("README.md commited to git")
+        logger.debug("README.md pushed to git")
     elif result is None or result == "no_change":
         logger.debug("README.md skipped: content identical to git")
     else:
@@ -823,7 +823,7 @@ def convert_to_markdown(source_path, target_path, logger, config=None):
                 git_result = sync_to_git(target_path, config, logger)
 
             if git_result is True:
-                git_suffix = ", commited to git"
+                git_suffix = ", pushed to git"
             elif git_result == "no_change":
                 git_suffix = ", git identical"
             else:
@@ -970,7 +970,7 @@ def process_directory(
                 if rel_dir and rel_dir != "."
                 else README_FILENAME
             )
-            important_logs.append(f'"{rel_readme}" commited to git')
+            important_logs.append(f'"{rel_readme}" pushed to git')
     elif result == "no_change":
         stats["files_git_identical"] += 1
 
@@ -1006,7 +1006,7 @@ def process_directory(
         if success is True:
             dir_stats["generated"] += 1
             stats["files_generated"] += 1
-            if "commited to git" in message:
+            if "pushed to git" in message:
                 stats["files_committed"] += 1
             if "git identical" in message:
                 stats["files_git_identical"] += 1
@@ -1205,7 +1205,7 @@ def main():
         logger.info(f"Directories processed: {stats['dirs_processed']}")
         logger.info(f"Directories skipped: {stats['dirs_skipped']}")
         logger.info(f"Files generated: {stats['files_generated']}")
-        logger.info(f"Files commited to git: {stats['files_committed']}")
+        logger.info(f"Files pushed to git: {stats['files_committed']}")
         logger.info(f"Files skipped as actual: {stats['files_skipped']}")
         logger.info(
             f"Files skipped as identical to git: {stats['files_git_identical']}"

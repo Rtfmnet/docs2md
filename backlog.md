@@ -33,3 +33,9 @@ CR5. Fore Clean Git config param
 Current: noi such a param
 New: if user add a new param to config file 'force_clean_git' and connection to Git wors and param: true the tool delete all files from the active project git url before process local files.
 Default value if false.
+status: pushed, to change (CR6)
+CR6. Update 'force_clean_git' logic:
+1. replace this tag by new tag 'recreate_git':
+it must do the same when it's ture as 'force_md_generation' and 'force_readme_git_commit' doing without having them true in config file
+remove tag 'force_clean_git'
+2. one more change - on clean stage do not delete any sub-folder that doesn't have README.md file with tag `doc2md#aikb` 
